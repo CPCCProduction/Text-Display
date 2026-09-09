@@ -292,25 +292,57 @@ function messageNode(m) {
 let lastReported = null;
 let lastReportAt = 0;
 
+// A message counts as on screen once this much of it shows, and stays marked
+// until less than the lower figure shows. Without that gap a message sitting
+// on the edge flips in and out several times a second and the admin panel's
+// marker never settles.
+const ENTER_RATIO = 0.35;
+const LEAVE_RATIO = 0.12;
+let marked = new Set();
+
 function visibleIds() {
-  if (!messages.length) return [];
+  if (!messages.length) {
+    marked.clear();
+    return [];
+  }
 
   if (track.classList.contains('stepped')) {
     const active = track.querySelector('.msg.enter');
-    return active ? [active.dataset.mid] : [];
+    marked = new Set(active ? [active.dataset.mid] : []);
+    return [...marked];
   }
 
-  // A crawl has two copies of every message, so the same id can be entering
-  // at one edge while it leaves at the other. De-duplicate.
+  const vertical = track.classList.contains('vertical');
   const frame = viewport.getBoundingClientRect();
-  const ids = [];
+
+  // A crawl holds two copies of every message, so one copy can be leaving at
+  // the top while the other enters at the bottom. Keep the best showing of
+  // the two, keyed by id, in DOM order.
+  const shown = new Map();
   for (const el of track.children) {
     const r = el.getBoundingClientRect();
-    const onScreen = r.bottom > frame.top && r.top < frame.bottom
-      && r.right > frame.left && r.left < frame.right;
-    if (onScreen && !ids.includes(el.dataset.mid)) ids.push(el.dataset.mid);
+    const overlap = vertical
+      ? Math.min(r.bottom, frame.bottom) - Math.max(r.top, frame.top)
+      : Math.min(r.right, frame.right) - Math.max(r.left, frame.left);
+    if (overlap <= 0) continue;
+
+    // Measured against the message or the screen, whichever is smaller: a
+    // message taller than the screen can never show a third of itself, but
+    // it is plainly on screen once it fills a third of the frame.
+    const own = vertical ? r.height : r.width;
+    const view = vertical ? frame.height : frame.width;
+    const ratio = overlap / Math.max(1, Math.min(own, view));
+
+    const id = el.dataset.mid;
+    shown.set(id, Math.max(shown.get(id) || 0, ratio));
   }
-  return ids;
+
+  const next = new Set();
+  for (const [id, ratio] of shown) {
+    if (ratio >= (marked.has(id) ? LEAVE_RATIO : ENTER_RATIO)) next.add(id);
+  }
+  marked = next;
+  return [...next];
 }
 
 function report(force = false) {

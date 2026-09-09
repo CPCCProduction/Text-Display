@@ -133,10 +133,17 @@ body.no-sidebar main { grid-template-columns: 1fr; }
 }
 .col.on-air > h2 { color: var(--ok); }
 .col-tools {
-  display: flex; gap: 6px; flex-wrap: wrap;
+  display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
   padding: 7px 9px;
   border-bottom: 1px solid var(--line);
 }
+.col-tools .toggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--muted); font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.col-tools .toggle input { margin: 0; cursor: pointer; }
 .cards {
   overflow-y: auto; padding: 9px; display: grid; gap: 9px; align-content: start;
   position: relative;   /* anchors the on-screen marker */

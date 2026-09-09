@@ -190,7 +190,11 @@ function renderQueues() {
     const name = host.dataset.cards;
     const simple = host.dataset.simple === '1';
     const list = TD.state[name] || [];
-    host.textContent = '';
+    // Replace the cards but leave the on-screen marker in place: recreating
+    // it would restart its CSS transition and make it snap instead of glide.
+    for (const el of [...host.children]) {
+      if (!el.classList.contains('onscreen-box')) el.remove();
+    }
     for (const m of list) host.append(card(m, name, simple));
     const count = $('[data-count="' + name + '"]');
     if (count) count.textContent = list.length;
@@ -223,6 +227,36 @@ TD.renderQueues = renderQueues;
 // marker is worse than none: it would point at a message nobody can see.
 const ONSCREEN_TTL = 30000;
 let markerKey = '';
+
+// Following the marker is a per-operator preference, remembered in this
+// browser. Someone reading down the queue wants it off; someone watching the
+// output wants it on.
+const FOLLOW_KEY = 'td.followOnScreen';
+
+function followEnabled() {
+  const box = $('#follow-onscreen');
+  return box ? box.checked : false;
+}
+
+function initFollowToggle() {
+  const box = $('#follow-onscreen');
+  if (!box) return;
+  let stored = null;
+  try {
+    stored = localStorage.getItem(FOLLOW_KEY);
+  } catch { /* private window, or site data blocked */ }
+  box.checked = stored === null ? true : stored === '1';
+  box.addEventListener('change', () => {
+    try {
+      localStorage.setItem(FOLLOW_KEY, box.checked ? '1' : '0');
+    } catch { /* the choice just will not survive a reload */ }
+    // Jump to the marker the moment it is switched back on.
+    if (box.checked) {
+      markerKey = '';
+      renderOnScreen();
+    }
+  });
+}
 
 function renderOnScreen() {
   const host = $('[data-cards="live"]');
@@ -260,7 +294,8 @@ function renderOnScreen() {
   const key = cards.map((c) => c.dataset.id).join(',');
   if (key !== markerKey) {
     markerKey = key;
-    if (top < host.scrollTop || bottom > host.scrollTop + host.clientHeight) {
+    const offScreen = top < host.scrollTop || bottom > host.scrollTop + host.clientHeight;
+    if (followEnabled() && offScreen) {
       host.scrollTo({ top: Math.max(0, top - 12), behavior: 'smooth' });
     }
   }
@@ -436,6 +471,7 @@ function connect() {
 
 TD.start = function start() {
   bindQueues();
+  initFollowToggle();
   const here = location.pathname.replace(/\/$/, '') || '/admin';
   for (const tab of $$('.tab')) {
     const target = new URL(tab.href, location.origin).pathname.replace(/\/$/, '');
