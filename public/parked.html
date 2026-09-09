@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Text Display - Parked &amp; Archive</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  /* No sidebar here: this page is for one job, so both columns get the full
+     width for reading and editing long messages. */
+  #queues { --cols: 2; }
+</style>
+</head>
+<body class="no-sidebar">
+<header>
+  <div class="brand">Text Display <small id="version"></small></div>
+  <nav class="tabs">
+    <a class="tab" href="/submit">Submit <span class="pill" data-tabcount="review">0</span></a>
+    <a class="tab" href="/admin">Live Board <span class="pill" data-tabcount="onair">0</span></a>
+    <a class="tab" href="/parked">Parked &amp; Archive <span class="pill" data-tabcount="offair">0</span></a>
+  </nav>
+  <span class="dot" id="status">connecting</span>
+  <div class="spacer"></div>
+  <span class="note">Edits here appear on the Live Board immediately</span>
+</header>
+
+<main>
+  <section id="queues">
+    <div class="col" data-state="parked">
+      <h2>Parked <span class="count" data-count="parked">0</span></h2>
+      <div class="col-tools">
+        <button class="btn sm ok" data-bulk="live">Send selected live</button>
+        <button class="btn sm ghost" data-bulk="review">Send selected to review</button>
+        <button class="btn sm ghost" data-select-all="parked">Select all</button>
+      </div>
+      <div class="cards" data-cards="parked"></div>
+    </div>
+
+    <div class="col" data-state="archive">
+      <h2>Archive <span class="count" data-count="archive">0</span></h2>
+      <div class="col-tools">
+        <button class="btn sm ok" data-bulk="live">Send selected live</button>
+        <button class="btn sm ghost" data-bulk="review">Send selected to review</button>
+        <button class="btn sm ghost" data-select-all="archive">Select all</button>
+        <button class="btn sm danger" data-clear="archive">Delete all archived</button>
+      </div>
+      <div class="cards" data-cards="archive"></div>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script src="/common.js"></script>
+<script>
+'use strict';
+TD.start();
+</script>
+</body>
+</html>

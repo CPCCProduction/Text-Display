@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Text Display</title>
+<!-- Webfonts are a nicety: every stack in settings.js ends in a local family,
+     so the page still renders correctly on a machine with no internet. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=Roboto:wght@100..900&family=Montserrat:wght@100..900&family=Oswald:wght@200..700&family=Bebas+Neue&display=swap">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: transparent;
+  }
+
+  /* The stage fills whatever it is given - a browser window, a fullscreen
+     display, or an NDI capture - so there is never a letterbox or a scaled
+     edge. Everything inside is positioned relative to that live size. */
+  #stage {
+    position: fixed; inset: 0;
+    overflow: hidden;
+    background: var(--bg);
+  }
+
+  #viewport {
+    position: absolute;
+    inset: var(--pad-y) var(--pad-x);
+    overflow: hidden;
+  }
+
+  #track {
+    position: absolute;
+    will-change: transform;
+  }
+  /* Vertical crawls stack messages in a column; tickers run in a row on one
+     line; stepped modes overlap every card in a single grid cell. */
+  #track.vertical {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing);
+    align-items: var(--h-align);
+    left: 0; right: 0; top: 0;
+  }
+  #track.horizontal {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--spacing);
+    white-space: nowrap;
+    left: 0; top: 50%;
+  }
+  #track.stepped {
+    display: grid;
+    grid-template-areas: 'card';
+    inset: 0;
+    align-content: var(--v-align);
+    justify-items: var(--h-align);
+  }
+
+  .msg {
+    width: min(var(--max-text-width), 100%);
+    font-family: var(--font-family);
+    font-size: var(--font-size);
+    font-weight: var(--font-weight);
+    font-style: var(--font-style);
+    line-height: var(--line-height);
+    letter-spacing: var(--letter-spacing);
+    color: var(--font-color);
+    text-align: var(--text-align);
+    text-align-last: var(--text-align-last);
+    hyphens: var(--hyphens);
+    text-transform: var(--text-transform);
+    text-shadow: var(--text-shadow);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  /* A ticker is one unwrapped line, so there is nothing to justify against. */
+  #track.horizontal .msg {
+    width: auto;
+    white-space: nowrap;
+    text-align: start;
+    hyphens: manual;
+  }
+  #track.stepped .msg {
+    grid-area: card;
+    opacity: 0;
+    transition: opacity var(--fade) ease, transform var(--fade) ease;
+  }
+  #track.stepped .msg.enter { opacity: 1; transform: none; }
+  #track.stepped.slide .msg { transform: translateY(40px); }
+  #track.stepped.slide .msg.enter { transform: translateY(0); }
+  #track.stepped.slide .msg.leave { transform: translateY(-40px); opacity: 0; }
+
+  /* In solid mode the gradients are painted over the text as bars; in
+     transparent/chroma they become an alpha mask instead, so the key stays
+     clean for NDI. The two are mutually exclusive. */
+  #edges {
+    position: absolute; inset: 0;
+    pointer-events: none;
+  }
+  #edges > div { position: absolute; display: none; }
+  #edge-top    { top: 0; left: 0; right: 0; }
+  #edge-bottom { bottom: 0; left: 0; right: 0; }
+  #edge-left   { top: 0; bottom: 0; left: 0; }
+  #edge-right  { top: 0; bottom: 0; right: 0; }
+
+  /* Nothing cleared means nothing on screen - no placeholder, no watermark.
+     The display is either showing a message or it is empty. */
+
+  #offline {
+    position: absolute; top: 12px; right: 14px;
+    display: none;
+    font: 600 12px/1 system-ui, sans-serif;
+    letter-spacing: 0.12em;
+    color: #ffb4b4;
+    background: rgba(90,0,0,0.55);
+    padding: 6px 10px;
+    border-radius: 4px;
+  }
+  body.offline #offline { display: block; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="viewport"><div id="track"></div></div>
+  <div id="edges">
+    <div id="edge-top"></div>
+    <div id="edge-bottom"></div>
+    <div id="edge-left"></div>
+    <div id="edge-right"></div>
+  </div>
+  <div id="offline">DISCONNECTED</div>
+</div>
+
+<script>
+'use strict';
+
+const FONT_STACKS = {
+  'Inter': "'Inter', 'Segoe UI', system-ui, sans-serif",
+  'Segoe UI': "'Segoe UI', system-ui, sans-serif",
+  'Arial': "Arial, Helvetica, sans-serif",
+  'Helvetica Neue': "'Helvetica Neue', Helvetica, Arial, sans-serif",
+  'Roboto': "'Roboto', 'Segoe UI', sans-serif",
+  'Montserrat': "'Montserrat', 'Segoe UI', sans-serif",
+  'Oswald': "'Oswald', 'Arial Narrow', sans-serif",
+  'Bebas Neue': "'Bebas Neue', Impact, sans-serif",
+  'Georgia': "Georgia, 'Times New Roman', serif",
+  'Times New Roman': "'Times New Roman', Times, serif",
+  'Courier New': "'Courier New', Courier, monospace",
+  'Consolas': "Consolas, 'Courier New', monospace",
+};
+
+const viewport = document.getElementById('viewport');
+const track = document.getElementById('track');
+const edges = {
+  top: document.getElementById('edge-top'),
+  bottom: document.getElementById('edge-bottom'),
+  left: document.getElementById('edge-left'),
+  right: document.getElementById('edge-right'),
+};
+
+// Preview mode lets the admin panel embed this page without the offline badge
+// flashing while the iframe reconnects.
+const PREVIEW = new URLSearchParams(location.search).get('preview') === '1';
+
+let settings = null;
+let messages = [];
+// What the DOM was last built from, split so that a change of content does
+// not restart the animation the way a change of layout has to. A settings
+// tweak that only changes colours rebuilds nothing at all.
+let builtLayout = '';
+let builtContent = '';
+let mode = 'static';
+
+/* ---------- painting settings ---------- */
+
+function rgba(hex, alpha) {
+  const h = String(hex).replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return 'rgba(' + r + ', ' + g + ', ' + b + ', ' + alpha + ')';
+}
+
+// start/center/end are valid for both flex align-items and grid justify-items,
+// so one value drives every mode.
+const EDGE_KEYWORD = { left: 'start', center: 'center', right: 'end', top: 'start', bottom: 'end' };
+
+function applySettings() {
+  const s = settings;
+  const root = document.documentElement.style;
+
+  const bg = s.background;
+  if (bg.mode === 'transparent') root.setProperty('--bg', 'transparent');
+  else if (bg.mode === 'chroma') root.setProperty('--bg', bg.chromaColor);
+  else root.setProperty('--bg', rgba(bg.color, bg.opacity));
+
+  root.setProperty('--font-family', FONT_STACKS[s.font.family] || FONT_STACKS.Inter);
+  root.setProperty('--font-size', s.font.size + 'px');
+  root.setProperty('--font-weight', String(s.font.weight));
+  root.setProperty('--font-style', s.font.italic ? 'italic' : 'normal');
+  root.setProperty('--font-color', s.font.color);
+  root.setProperty('--line-height', String(s.font.lineHeight));
+  root.setProperty('--letter-spacing', s.font.letterSpacing + 'px');
+  root.setProperty('--text-transform', s.font.uppercase ? 'uppercase' : 'none');
+  root.setProperty('--text-align', s.font.align);
+  // Justified text needs hyphenation to avoid rivers of white space at large
+  // sizes, and its last line should follow the block, not stay stretched.
+  root.setProperty('--hyphens', s.font.align === 'justify' ? 'auto' : 'manual');
+  root.setProperty('--text-align-last', s.font.align === 'justify'
+    ? s.layout.horizontalAlign
+    : 'auto');
+
+  const sh = s.font.shadow;
+  root.setProperty('--text-shadow', sh.enabled
+    ? sh.offsetX + 'px ' + sh.offsetY + 'px ' + sh.blur + 'px ' + rgba(sh.color, sh.opacity)
+    : 'none');
+
+  root.setProperty('--pad-x', s.layout.paddingX + 'px');
+  root.setProperty('--pad-y', s.layout.paddingY + 'px');
+  root.setProperty('--spacing', s.scroll.spacing + 'px');
+  root.setProperty('--fade', s.scroll.fadeSeconds + 's');
+  root.setProperty('--max-text-width', s.layout.maxTextWidth + 'px');
+  root.setProperty('--h-align', EDGE_KEYWORD[s.layout.horizontalAlign] || 'start');
+  root.setProperty('--v-align', EDGE_KEYWORD[s.layout.verticalAlign] || 'center');
+
+  applyEdges();
+}
+
+function applyEdges() {
+  const g = settings.gradients;
+  const asMask = settings.background.mode !== 'solid' && g.maskInAlphaModes;
+  const AXIS = { top: 'to bottom', bottom: 'to top', left: 'to right', right: 'to left' };
+  const masks = [];
+
+  for (const edge of ['top', 'bottom', 'left', 'right']) {
+    const conf = g[edge];
+    const el = edges[edge];
+    const size = conf.enabled ? conf.size : 0;
+
+    // Painted bars only make sense over an opaque background.
+    if (!asMask && size > 0) {
+      el.style.display = 'block';
+      if (edge === 'top' || edge === 'bottom') el.style.height = size + 'px';
+      else el.style.width = size + 'px';
+      el.style.background = 'linear-gradient(' + AXIS[edge] + ', '
+        + rgba(g.color, conf.strength) + ', ' + rgba(g.color, 0) + ')';
+    } else {
+      el.style.display = 'none';
+    }
+
+    if (asMask && size > 0) {
+      const fadeTo = 1 - conf.strength;   // strength 1 fades the text fully out
+      masks.push('linear-gradient(' + AXIS[edge] + ', rgba(0,0,0,' + fadeTo
+        + ') 0px, rgba(0,0,0,1) ' + size + 'px)');
+    }
+  }
+
+  if (masks.length) {
+    // Intersecting the per-edge gradients gives the corner falloff for free.
+    const value = masks.join(', ');
+    viewport.style.maskImage = value;
+    viewport.style.webkitMaskImage = value;
+    viewport.style.maskComposite = 'intersect';
+    viewport.style.webkitMaskComposite = 'source-in';
+    viewport.style.maskMode = 'alpha';
+  } else {
+    viewport.style.maskImage = 'none';
+    viewport.style.webkitMaskImage = 'none';
+  }
+}
+
+/* ---------- building message nodes ---------- */
+
+function messageNode(m) {
+  const el = document.createElement('div');
+  el.className = 'msg';
+  el.dataset.mid = m.id;
+  el.textContent = m.text;
+  return el;
+}
+
+/* ---------- reporting what is actually on screen ---------- */
+
+// The admin panel marks which live messages the audience can see right now.
+// Only a real display reports: the admin's own preview iframe would other-
+// wise fight the output window, since it is a different size.
+let lastReported = null;
+let lastReportAt = 0;
+
+function visibleIds() {
+  if (!messages.length) return [];
+
+  if (track.classList.contains('stepped')) {
+    const active = track.querySelector('.msg.enter');
+    return active ? [active.dataset.mid] : [];
+  }
+
+  // A crawl has two copies of every message, so the same id can be entering
+  // at one edge while it leaves at the other. De-duplicate.
+  const frame = viewport.getBoundingClientRect();
+  const ids = [];
+  for (const el of track.children) {
+    const r = el.getBoundingClientRect();
+    const onScreen = r.bottom > frame.top && r.top < frame.bottom
+      && r.right > frame.left && r.left < frame.right;
+    if (onScreen && !ids.includes(el.dataset.mid)) ids.push(el.dataset.mid);
+  }
+  return ids;
+}
+
+function report(force = false) {
+  if (PREVIEW) return;
+  const ids = visibleIds();
+  const key = ids.join(',');
+  const now = Date.now();
+  // Resend unchanged sets every 10s as a heartbeat, so the admin panel can
+  // tell a still display from a closed one.
+  if (!force && key === lastReported && now - lastReportAt < 10000) return;
+  lastReported = key;
+  lastReportAt = now;
+  fetch('/api/onscreen', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  }).catch(() => { /* the admin panel simply keeps the last known set */ });
+}
+
+setInterval(() => report(true), 10000);
+
+const MODE_CLASS = {
+  'crawl-up': 'vertical', 'crawl-down': 'vertical',
+  'ticker-left': 'horizontal', 'ticker-right': 'horizontal',
+  'static': 'stepped', 'fade': 'stepped', 'slide-up': 'stepped',
+};
+
+// Anything that changes how the track is laid out or measured, and so has to
+// restart the animation from the top.
+function layoutSignature() {
+  return JSON.stringify([
+    settings.scroll.type, settings.scroll.spacing,
+    settings.layout.maxTextWidth,
+    settings.font.size, settings.font.family, settings.font.lineHeight,
+  ]);
+}
+
+// Which messages are showing. Clearing one message or sending another live
+// must NOT restart the crawl: at a slow speed a restart begins off screen,
+// leaving the display blank for many seconds in the middle of a service.
+function contentSignature() {
+  return JSON.stringify(messages.map((m) => m.id + ':' + m.text));
+}
+
+function build() {
+  const layoutSig = layoutSignature();
+  const contentSig = contentSignature();
+  if (layoutSig === builtLayout && contentSig === builtContent) return;
+
+  const layoutChanged = layoutSig !== builtLayout;
+  builtLayout = layoutSig;
+  builtContent = contentSig;
+
+  // What is showing right now, so a content-only change can carry on from
+  // here rather than starting over.
+  const showingId = track.querySelector('.msg.enter')?.dataset.mid || null;
+  const keepGoing = !layoutChanged && frame !== null;
+
+  mode = settings.scroll.type;
+  track.className = MODE_CLASS[mode] || 'stepped';
+  if (mode === 'slide-up') track.classList.add('slide');
+  track.style.transform = track.classList.contains('horizontal') ? 'translateY(-50%)' : '';
+  track.textContent = '';
+
+  if (!messages.length) {
+    stopAnimation();
+    report(true);
+    return;
+  }
+
+  for (const m of messages) track.append(messageNode(m));
+
+  if (track.classList.contains('stepped')) {
+    startStepped(showingId);
+  } else {
+    // A continuous crawl needs a second copy of the run, so the head of the
+    // loop is already on screen as the tail rolls off.
+    for (const m of messages) {
+      const clone = messageNode(m);
+      clone.dataset.clone = '1';
+      track.append(clone);
+    }
+    startCrawl(keepGoing);
+  }
+}
+
+/* ---------- stepped modes: static / fade / slide-up ---------- */
+
+let stepTimer = null;
+let stepIndex = 0;
+
+function stopStepped() {
+  clearTimeout(stepTimer);
+  stepTimer = null;
+}
+
+function showStep(index) {
+  const cards = track.children;
+  for (let i = 0; i < cards.length; i += 1) {
+    const active = i === index;
+    cards[i].classList.toggle('enter', active);
+    cards[i].classList.toggle('leave', !active);
+  }
+  report();
+}
+
+function scheduleStep() {
+  stopStepped();
+  stepTimer = setTimeout(() => {
+    stepIndex = (stepIndex + 1) % messages.length;
+    showStep(stepIndex);
+    scheduleStep();
+  }, settings.scroll.holdSeconds * 1000);
+}
+
+// Stays on the message that was already showing when the live list changes,
+// so clearing an unrelated message does not cut this one short.
+function startStepped(showingId = null) {
+  stopAnimation();
+  const kept = showingId ? messages.findIndex((m) => m.id === showingId) : -1;
+  stepIndex = kept >= 0 ? kept : 0;
+  showStep(stepIndex);
+  if (messages.length > 1) scheduleStep();
+}
+
+/* ---------- continuous modes: crawl / ticker ---------- */
+
+let frame = null;
+let offset = 0;
+let lastTime = 0;
+// Set when the window resizes, so the crawl re-measures on its next frame
+// instead of reading layout every single frame.
+let needsMeasure = false;
+
+function stopCrawl() {
+  if (frame) cancelAnimationFrame(frame);
+  frame = null;
+}
+
+function stopAnimation() {
+  stopStepped();
+  stopCrawl();
+}
+
+function startCrawl(keepGoing = false) {
+  stopAnimation();
+  const vertical = track.classList.contains('vertical');
+  const gap = settings.scroll.spacing;
+
+  // One "run" is the original set of messages plus the gap that follows the
+  // last one; wrapping at exactly that distance makes the seam invisible.
+  const runLength = () => [...track.children]
+    .filter((el) => !el.dataset.clone)
+    .reduce((sum, el) => sum + (vertical ? el.offsetHeight : el.offsetWidth) + gap, 0);
+
+  let run = runLength();
+  let span = vertical ? viewport.clientHeight : viewport.clientWidth;
+  const forward = mode === 'crawl-down' || mode === 'ticker-right';
+
+  // Start off-screen so the first message rolls in rather than popping in.
+  // On a content change the crawl carries on from where it was instead, which
+  // is what keeps the screen from going blank when a message is added or
+  // taken down. The wrap below copes with the run having grown or shrunk.
+  if (!keepGoing) offset = forward ? -run : span;
+  lastTime = 0;
+  needsMeasure = false;
+  // Measuring every child every frame would force a layout 60 times a
+  // second, so the on-screen check runs a few times a second instead.
+  let lastCheck = 0;
+
+  const step = (time) => {
+    if (!lastTime) lastTime = time;
+    // A long stall (window minimised, machine busy) must not teleport the
+    // crawl forward by seconds' worth of pixels.
+    const dt = Math.min(0.25, (time - lastTime) / 1000);
+    lastTime = time;
+
+    if (needsMeasure) {
+      needsMeasure = false;
+      run = runLength();
+      span = vertical ? viewport.clientHeight : viewport.clientWidth;
+    }
+    if (!run) run = runLength();
+
+    offset += (forward ? 1 : -1) * settings.scroll.speed * dt;
+
+    if (run > 0) {
+      if (forward && offset >= 0) offset -= run;
+      if (!forward && offset <= -run) offset += run;
+    }
+
+    const px = Math.round(offset * 100) / 100;
+    track.style.transform = vertical
+      ? 'translateY(' + px + 'px)'
+      : 'translate(' + px + 'px, -50%)';
+
+    if (time - lastCheck > 250) {
+      lastCheck = time;
+      report();
+    }
+
+    frame = requestAnimationFrame(step);
+  };
+  frame = requestAnimationFrame(step);
+}
+
+/* ---------- live data ---------- */
+
+function apply(snapshot) {
+  const changed = JSON.stringify(settings) !== JSON.stringify(snapshot.settings);
+  settings = snapshot.settings;
+  messages = Array.isArray(snapshot.live) ? snapshot.live : [];
+  if (changed) applySettings();
+  build();
+}
+
+let source = null;
+let retry = null;
+
+function connect() {
+  clearTimeout(retry);
+  if (source) source.close();
+  source = new EventSource('/api/stream');
+
+  source.onopen = () => document.body.classList.remove('offline');
+  source.onmessage = (event) => {
+    try {
+      apply(JSON.parse(event.data));
+      document.body.classList.remove('offline');
+    } catch (err) {
+      console.error('bad snapshot', err);
+    }
+  };
+  // The stream is the only path for updates, so a dropped connection has to
+  // reconnect on its own - nobody is watching this machine mid-service.
+  source.onerror = () => {
+    if (!PREVIEW) document.body.classList.add('offline');
+    source.close();
+    retry = setTimeout(connect, 2000);
+  };
+}
+
+// Going fullscreen changes every measurement the crawl depends on.
+window.addEventListener('resize', () => {
+  needsMeasure = true;
+});
+
+connect();
+</script>
+</body>
+</html>

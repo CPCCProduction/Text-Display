@@ -1,0 +1,46 @@
+{
+  "name": "text-display",
+  "productName": "Text Display",
+  "version": "0.1.0",
+  "description": "Messages are pasted in on a submission page, reviewed in an admin panel, and displayed on a full-bleed page (NDI/alpha friendly).",
+  "author": "Connection Pointe Christian Church",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "serve": "node src/serve.js",
+    "version:patch": "npm version patch -m \"Release v%s\"",
+    "version:minor": "npm version minor -m \"Release v%s\"",
+    "dist": "electron-builder"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^38.1.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "org.connectionpointe.textdisplay",
+    "productName": "Text Display",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "src/**/*",
+      "public/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Text Display - Live Board</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  /* Two wide columns instead of four: the operator running the service only
+     needs what is waiting and what is on screen. */
+  #queues { --cols: 2; }
+
+  #preview-wrap {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: repeating-conic-gradient(#20263c 0% 25%, #171c2e 0% 50%) 50%/16px 16px;
+  }
+  #preview-wrap .head {
+    border-bottom: 1px solid var(--line);
+    padding: 7px 10px; font-size: 12px; color: var(--muted);
+  }
+  /* The display page fills whatever viewport it is given, so the preview
+     gives the iframe a real 1920x1080 viewport and scales the whole frame
+     down. Sizing the iframe to the sidebar instead would render 48px text
+     into a 350px box - a crop, not a preview. */
+  #preview-stage {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+  }
+  #preview-frame {
+    position: absolute;
+    top: 0; left: 0;
+    width: 1920px; height: 1080px;
+    border: 0; display: block;
+    transform-origin: top left;
+  }
+
+  aside {
+    border-left: 1px solid var(--line);
+    background: var(--panel);
+    overflow-y: auto;
+    min-height: 0;
+    padding: 12px;
+    display: grid; gap: 12px; align-content: start;
+  }
+  #compose textarea {
+    width: 100%; min-height: 62px; resize: vertical;
+    background: #0d1224; border: 1px solid var(--line); border-radius: 5px; padding: 6px;
+  }
+  #compose input[type=text] {
+    width: 100%; background: #0d1224; border: 1px solid var(--line);
+    border-radius: 5px; padding: 5px 6px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Text Display <small id="version"></small></div>
+  <nav class="tabs">
+    <a class="tab" href="/submit">Submit <span class="pill" data-tabcount="review">0</span></a>
+    <a class="tab" href="/admin">Live Board <span class="pill" data-tabcount="onair">0</span></a>
+    <a class="tab" href="/parked">Parked &amp; Archive <span class="pill" data-tabcount="offair">0</span></a>
+  </nav>
+  <span class="dot" id="status">connecting</span>
+  <div class="spacer"></div>
+  <button class="btn" id="open-display">Open Display Page</button>
+  <button class="btn ghost" id="copy-display">Copy Display URL</button>
+</header>
+
+<main>
+  <section id="queues">
+    <div class="col" data-state="review">
+      <h2>Review <span class="count" data-count="review">0</span></h2>
+      <div class="col-tools">
+        <button class="btn sm ok" data-bulk="live">Send selected live</button>
+        <button class="btn sm warn" data-bulk="parked">Park selected</button>
+        <button class="btn sm ghost" data-select-all="review">Select all</button>
+      </div>
+      <div class="cards" data-cards="review"></div>
+    </div>
+
+    <div class="col on-air" data-state="live">
+      <h2>Live - on screen <span class="count" data-count="live">0</span></h2>
+      <div class="col-tools">
+        <button class="btn sm" data-bulk="archive">Take selected down</button>
+        <button class="btn sm warn" data-bulk="parked">Park selected</button>
+        <button class="btn sm ghost" data-select-all="live">Select all</button>
+        <button class="btn sm danger" data-clear="live">Take all down</button>
+      </div>
+      <div class="cards" data-cards="live"></div>
+    </div>
+  </section>
+
+  <aside>
+    <div id="preview-wrap">
+      <div class="head">Live preview <span class="note">1920 x 1080</span></div>
+      <div id="preview-stage">
+        <iframe id="preview-frame" src="/display?preview=1" title="Display preview"></iframe>
+      </div>
+    </div>
+
+    <details class="group" id="compose">
+      <summary>Add a message by hand</summary>
+      <div class="fields">
+        <input type="text" id="compose-sender" placeholder="Name (optional)">
+        <textarea id="compose-body" placeholder="Message text"></textarea>
+        <div class="row">
+          <button class="btn primary" id="compose-review">Add to review</button>
+          <button class="btn ok" id="compose-live">Add and send live</button>
+        </div>
+      </div>
+    </details>
+
+    <div id="settings-groups"></div>
+
+    <details class="group">
+      <summary>Connection &amp; security</summary>
+      <div class="fields" id="config-fields">
+        <div class="field">
+          <label for="cfg-port">Port (restart to apply)</label>
+          <div class="control"><input type="number" id="cfg-port" min="1" max="65535"></div>
+        </div>
+        <div class="field">
+          <label for="cfg-admin-local">Admin only from this computer</label>
+          <div class="control"><input type="checkbox" id="cfg-admin-local"></div>
+        </div>
+        <div class="note">
+          Turn the setting above off to let someone submit or moderate from
+          another computer on the network.
+        </div>
+        <div class="note" id="urls"></div>
+      </div>
+    </details>
+
+    <div class="row">
+      <button class="btn danger" id="reset-settings">Reset display styling</button>
+    </div>
+  </aside>
+</main>
+
+<div id="toast"></div>
+
+<script src="/common.js"></script>
+<script>
+'use strict';
+
+/* ---------- settings schema ---------- */
+
+const ALIGN_V = ['top', 'center', 'bottom'];
+const ALIGN_H = ['left', 'center', 'right'];
+
+const SCHEMA = [
+  ['Background', [
+    ['background.mode', 'Mode', 'select', () => TD.options.backgroundModes],
+    ['background.color', 'Colour', 'color'],
+    ['background.opacity', 'Opacity', 'range', 0, 1, 0.01],
+    ['background.chromaColor', 'Chroma key colour', 'color'],
+  ]],
+  ['Text', [
+    ['font.family', 'Font', 'select', () => TD.options.fonts],
+    ['font.size', 'Size', 'range', 12, 240, 1],
+    ['font.weight', 'Weight', 'range', 100, 900, 100],
+    ['font.color', 'Colour', 'color'],
+    ['font.lineHeight', 'Line height', 'range', 0.8, 3, 0.05],
+    ['font.letterSpacing', 'Letter spacing', 'range', -10, 40, 0.5],
+    ['font.align', 'Text align', 'select', () => TD.options.textAligns],
+    ['font.italic', 'Italic', 'check'],
+    ['font.uppercase', 'Uppercase', 'check'],
+  ]],
+  ['Text shadow', [
+    ['font.shadow.enabled', 'Enabled', 'check'],
+    ['font.shadow.blur', 'Blur', 'range', 0, 80, 1],
+    ['font.shadow.opacity', 'Opacity', 'range', 0, 1, 0.05],
+    ['font.shadow.offsetX', 'Offset X', 'range', -40, 40, 1],
+    ['font.shadow.offsetY', 'Offset Y', 'range', -40, 40, 1],
+    ['font.shadow.color', 'Colour', 'color'],
+  ]],
+  ['Motion', [
+    ['scroll.type', 'Style', 'select', () => TD.options.scrollTypes],
+    ['scroll.speed', 'Speed (px/sec)', 'range', 5, 600, 1],
+    ['scroll.spacing', 'Gap between messages', 'range', 0, 600, 5],
+    ['scroll.holdSeconds', 'Hold (seconds)', 'range', 1, 120, 1],
+    ['scroll.fadeSeconds', 'Fade (seconds)', 'range', 0, 5, 0.1],
+  ]],
+  ['Edge fades', [
+    ['gradients.top.enabled', 'Top', 'check'],
+    ['gradients.top.size', 'Top size', 'range', 0, 900, 10],
+    ['gradients.bottom.enabled', 'Bottom', 'check'],
+    ['gradients.bottom.size', 'Bottom size', 'range', 0, 900, 10],
+    ['gradients.left.enabled', 'Left', 'check'],
+    ['gradients.left.size', 'Left size', 'range', 0, 900, 10],
+    ['gradients.right.enabled', 'Right', 'check'],
+    ['gradients.right.size', 'Right size', 'range', 0, 900, 10],
+    ['gradients.color', 'Fade colour', 'color'],
+    ['gradients.maskInAlphaModes', 'Fade text when transparent', 'check'],
+  ]],
+  ['Layout', [
+    ['layout.paddingX', 'Padding X', 'range', 0, 800, 5],
+    ['layout.paddingY', 'Padding Y', 'range', 0, 800, 5],
+    ['layout.maxTextWidth', 'Max text width', 'range', 200, 3840, 10],
+    ['layout.horizontalAlign', 'Block position', 'select', () => ALIGN_H],
+    ['layout.verticalAlign', 'Block position (vertical)', 'select', () => ALIGN_V],
+  ]],
+];
+
+let groupsBuilt = false;
+
+function fieldRow([path, label, type, a, b, c]) {
+  const wrap = document.createElement('div');
+  wrap.className = 'field';
+
+  const lab = document.createElement('label');
+  lab.textContent = label;
+  lab.htmlFor = 'set-' + path;
+
+  const control = document.createElement('div');
+  control.className = 'control';
+
+  let input;
+  if (type === 'select') {
+    input = document.createElement('select');
+    for (const value of (typeof a === 'function' ? a() : a) || []) {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = value;
+      input.append(opt);
+    }
+  } else if (type === 'check') {
+    input = document.createElement('input');
+    input.type = 'checkbox';
+  } else if (type === 'color' || type === 'text') {
+    input = document.createElement('input');
+    input.type = type;
+  } else {
+    input = document.createElement('input');
+    input.type = type === 'number' ? 'number' : 'range';
+    input.min = a; input.max = b; input.step = c;
+  }
+
+  input.id = 'set-' + path;
+  input.dataset.path = path;
+  input.dataset.type = type;
+  control.append(input);
+
+  if (type === 'range') {
+    const val = document.createElement('span');
+    val.className = 'val';
+    val.dataset.valFor = path;
+    control.append(val);
+  }
+
+  wrap.append(lab, control);
+  return wrap;
+}
+
+function buildSettingsGroups() {
+  const host = $('#settings-groups');
+  host.textContent = '';
+  for (const [title, rows] of SCHEMA) {
+    const details = document.createElement('details');
+    details.className = 'group';
+    const summary = document.createElement('summary');
+    summary.textContent = title;
+    const fields = document.createElement('div');
+    fields.className = 'fields';
+    for (const row of rows) fields.append(fieldRow(row));
+    details.append(summary, fields);
+    host.append(details);
+  }
+  groupsBuilt = true;
+}
+
+function syncSettingsInputs() {
+  for (const input of $$('#settings-groups [data-path]')) {
+    // Never yank a control out from under the operator's cursor.
+    if (input === document.activeElement) continue;
+    const value = TD.get(TD.settings, input.dataset.path);
+    if (value === undefined) continue;
+    if (input.dataset.type === 'check') input.checked = Boolean(value);
+    else input.value = value;
+    const val = $('[data-val-for="' + input.dataset.path + '"]');
+    if (val) val.textContent = value;
+  }
+}
+
+let pendingPatch = {};
+let patchTimer = null;
+
+// Dragging a slider fires dozens of input events; coalescing them into one
+// PATCH keeps the display page from rebuilding on every pixel.
+function queueSettings(path, value) {
+  TD.mergeDeep(pendingPatch, TD.nest(path, value));
+  clearTimeout(patchTimer);
+  patchTimer = setTimeout(async () => {
+    const patch = pendingPatch;
+    pendingPatch = {};
+    try {
+      TD.settings = await TD.api('settings', { method: 'PATCH', body: JSON.stringify(patch) });
+      syncSettingsInputs();
+    } catch (err) {
+      TD.toast(err.message, true);
+    }
+  }, 120);
+}
+
+$('#settings-groups').addEventListener('input', (event) => {
+  const input = event.target.closest('[data-path]');
+  if (!input) return;
+  const { path, type } = input.dataset;
+
+  let value;
+  if (type === 'check') value = input.checked;
+  else if (type === 'range' || type === 'number') value = Number(input.value);
+  else value = input.value;
+
+  const val = $('[data-val-for="' + path + '"]');
+  if (val) val.textContent = value;
+  queueSettings(path, value);
+});
+
+/* ---------- compose ---------- */
+
+async function compose(sendLive) {
+  const sender = $('#compose-sender').value.trim();
+  const body = $('#compose-body').value.trim();
+  if (!body) return TD.toast('Type a message first', true);
+  try {
+    const created = await TD.api('messages', {
+      method: 'POST', body: JSON.stringify({ sender, body }),
+    });
+    if (sendLive) {
+      await TD.api('messages/' + created.id + '/state', {
+        method: 'PATCH', body: JSON.stringify({ state: 'live' }),
+      });
+    }
+    $('#compose-body').value = '';
+    TD.toast(sendLive ? 'Added and sent live' : 'Added to review');
+  } catch (err) {
+    TD.toast(err.message, true);
+  }
+}
+
+$('#compose-review').addEventListener('click', () => compose(false));
+$('#compose-live').addEventListener('click', () => compose(true));
+
+/* ---------- config ---------- */
+
+function syncConfig() {
+  const cfg = TD.state.config || {};
+  if ($('#cfg-port') !== document.activeElement) $('#cfg-port').value = cfg.port ?? '';
+  $('#cfg-admin-local').checked = Boolean(cfg.adminLocalhostOnly);
+  $('#urls').textContent = 'Reachable at: ' + (cfg.urls || []).join('  ');
+}
+
+async function saveConfig() {
+  try {
+    TD.state.config = await TD.api('config', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        port: Number($('#cfg-port').value) || undefined,
+        adminLocalhostOnly: $('#cfg-admin-local').checked,
+      }),
+    });
+    syncConfig();
+    TD.toast('Connection settings saved');
+  } catch (err) {
+    TD.toast(err.message, true);
+  }
+}
+
+$('#config-fields').addEventListener('change', (event) => {
+  if (event.target.matches('#cfg-port, #cfg-admin-local')) saveConfig();
+});
+
+function copy(text, label) {
+  navigator.clipboard.writeText(text).then(
+    () => TD.toast(label + ' copied'),
+    () => TD.toast('Could not copy to the clipboard', true),
+  );
+}
+$('#copy-display').addEventListener('click', () => {
+  const base = (TD.state?.config?.urls && TD.state.config.urls[0]) || location.origin;
+  copy(base + '/display', 'Display URL');
+});
+$('#open-display').addEventListener('click', () => window.open('/display', '_blank'));
+
+$('#reset-settings').addEventListener('click', async () => {
+  if (!confirm('Reset every display styling option back to its default?')) return;
+  try {
+    TD.settings = await TD.api('settings', { method: 'DELETE' });
+    syncSettingsInputs();
+    TD.toast('Display styling reset');
+  } catch (err) {
+    TD.toast(err.message, true);
+  }
+});
+
+/* ---------- preview scaling ---------- */
+
+// The iframe is a fixed 1920x1080; scale it to whatever width the sidebar
+// currently gives us so the preview stays a faithful miniature.
+const previewStage = $('#preview-stage');
+const previewFrame = $('#preview-frame');
+
+function fitPreview() {
+  const width = previewStage.clientWidth;
+  if (!width) return;
+  previewFrame.style.transform = 'scale(' + (width / 1920) + ')';
+}
+
+new ResizeObserver(fitPreview).observe(previewStage);
+fitPreview();
+
+/* ---------- wire up ---------- */
+
+TD.onState(() => {
+  if (!groupsBuilt) buildSettingsGroups();
+  syncSettingsInputs();
+  syncConfig();
+});
+
+TD.start();
+</script>
+</body>
+</html>

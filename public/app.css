@@ -1,0 +1,253 @@
+/* Shared chrome for every admin-side page: the header and tabs, the queue
+   columns, the message cards, and the form controls used by the settings
+   panel. Page-specific layout lives in the page itself. */
+
+:root {
+  color-scheme: dark;
+  --bg: #0b1020;
+  --panel: #141a2e;
+  --panel-2: #1b2340;
+  --line: #26304f;
+  --ink: #e8ecf8;
+  --muted: #8b96b8;
+  --accent: #4da3ff;
+  --ok: #35c98a;
+  --warn: #f0b429;
+  --danger: #ff6b6b;
+  --radius: 8px;
+  --cols: 2;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font: 14px/1.45 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+
+/* ---------- header ---------- */
+body > header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
+.brand small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+.spacer { flex: 1; }
+.dot {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--muted); font-size: 12px; white-space: nowrap;
+}
+.dot::before {
+  content: ''; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--danger);
+}
+body.live .dot::before { background: var(--ok); }
+
+/* Two people work these pages at once, so the tabs carry live counts and
+   the current page is marked rather than just styled. */
+.tabs { display: flex; gap: 6px; }
+.tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 13px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.tab:hover { border-color: var(--accent); color: var(--ink); }
+.tab[aria-current='page'] {
+  background: #1d4f86; border-color: #2a6cb0; color: #fff; font-weight: 600;
+}
+.tab .pill {
+  background: rgba(0,0,0,0.32);
+  border-radius: 20px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.btn {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: #1d4f86; border-color: #2a6cb0; }
+.btn.ok { background: #1c5f45; border-color: #2b7f5d; }
+.btn.warn { background: #6b5015; border-color: #90691a; }
+.btn.danger { background: #6b2020; border-color: #973030; }
+.btn.ghost { background: transparent; }
+.btn.sm { padding: 3px 8px; font-size: 12px; }
+
+/* ---------- shell ---------- */
+main {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  min-height: 0;
+}
+body.no-sidebar main { grid-template-columns: 1fr; }
+
+#queues {
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+.col {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  min-height: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.col > h2 {
+  margin: 0;
+  padding: 9px 11px;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 8px;
+}
+.col > h2 .count {
+  background: var(--panel-2);
+  border-radius: 20px;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.col.on-air > h2 { color: var(--ok); }
+.col-tools {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--line);
+}
+.cards {
+  overflow-y: auto; padding: 9px; display: grid; gap: 9px; align-content: start;
+  position: relative;   /* anchors the on-screen marker */
+}
+
+/* Floats over whichever live messages the audience can see right now and
+   glides down the column as the display scrolls. Out of the grid flow, so it
+   never shifts the cards it marks. */
+.onscreen-box {
+  position: absolute;
+  left: 4px; right: 4px;
+  border: 2px solid var(--ok);
+  border-radius: 8px;
+  background: rgba(53, 201, 138, 0.10);
+  box-shadow: 0 0 0 1px rgba(53, 201, 138, 0.25), 0 6px 18px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  transition: top 0.35s ease, height 0.35s ease;
+  z-index: 2;
+}
+.onscreen-box span {
+  position: absolute;
+  top: -9px; left: 11px;
+  background: var(--ok);
+  color: #04150d;
+  font: 700 10px/1.6 'Segoe UI', system-ui, sans-serif;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 1px 7px;
+  border-radius: 3px;
+}
+.cards:empty::after {
+  content: 'Nothing here';
+  color: var(--muted); font-size: 12px; padding: 6px;
+}
+
+.card {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px;
+  display: grid; gap: 7px;
+}
+.card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.card-top {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 12px; color: var(--muted);
+}
+.card-top .who { color: var(--ink); font-weight: 600; font-size: 13px; }
+.card-top input[type=checkbox] { margin: 0 2px 0 0; }
+.card .text { white-space: pre-wrap; word-break: break-word; }
+.card .tag {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--warn); border: 1px solid currentColor; border-radius: 3px; padding: 0 4px;
+}
+.card-actions { display: flex; gap: 5px; flex-wrap: wrap; }
+.card textarea {
+  width: 100%; min-height: 74px; resize: vertical;
+  background: #0d1224;
+  border: 1px solid var(--line); border-radius: 5px; padding: 6px;
+}
+
+/* ---------- form controls ---------- */
+details.group {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+details.group > summary {
+  padding: 9px 11px; cursor: pointer; font-weight: 600; font-size: 13px;
+  list-style: none;
+}
+details.group > summary::marker, details.group > summary::-webkit-details-marker { display: none; }
+details.group > summary::before { content: '\25B8 '; color: var(--muted); }
+details.group[open] > summary::before { content: '\25BE '; }
+.fields { padding: 4px 11px 11px; display: grid; gap: 8px; }
+.field { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
+.field > label { color: var(--muted); font-size: 12px; }
+.field .control { display: flex; align-items: center; gap: 6px; justify-self: end; }
+.field input[type=range] { width: 128px; }
+.field input[type=number] { width: 68px; }
+.field input[type=text] { width: 128px; }
+.field select { width: 148px; }
+.field input[type=color] { width: 40px; height: 26px; padding: 0; border: 1px solid var(--line); background: none; }
+.field .val { color: var(--muted); font-size: 12px; min-width: 40px; text-align: right; }
+.field input, .field select, .field textarea {
+  background: #0d1224; border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px;
+}
+.row { display: flex; gap: 6px; flex-wrap: wrap; }
+.note { color: var(--muted); font-size: 12px; }
+code {
+  background: #0d1224; border: 1px solid var(--line); border-radius: 4px;
+  padding: 1px 5px; font-size: 12px; word-break: break-all;
+}
+
+/* ---------- toast ---------- */
+#toast {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+  background: #1d2440; border: 1px solid var(--line); border-radius: 6px;
+  padding: 9px 15px; opacity: 0; pointer-events: none;
+  transition: opacity 0.2s ease;
+  max-width: 60vw;
+  z-index: 10;
+}
+#toast.show { opacity: 1; }
+#toast.error { border-color: var(--danger); color: #ffd7d7; }
+
+@media (max-width: 1250px) {
+  main { grid-template-columns: 1fr 330px; }
+}
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; }
+  #queues { grid-template-columns: 1fr; overflow-y: auto; }
+  .col { max-height: 60vh; }
+}

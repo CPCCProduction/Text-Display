@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Text Display - Submit Messages</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  /* One column, centred, nothing else: this page is used by someone who is
+     only pasting messages in. */
+  main { grid-template-columns: 1fr; overflow-y: auto; }
+  .sheet {
+    width: 100%;
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 22px 18px 40px;
+    display: grid;
+    gap: 18px;
+    align-content: start;
+  }
+
+  .paste-box {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px;
+    display: grid;
+    gap: 12px;
+  }
+  .paste-box h1 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+  }
+  #paste {
+    width: 100%;
+    min-height: 210px;
+    resize: vertical;
+    background: #0d1224;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 11px 12px;
+    line-height: 1.55;
+    font-size: 15px;
+  }
+  #paste:focus { outline: none; border-color: var(--accent); }
+  .paste-actions {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .paste-actions .btn { padding: 8px 18px; font-size: 15px; }
+  .split {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--muted); font-size: 13px;
+  }
+  #count { color: var(--muted); font-size: 13px; }
+  #count strong { color: var(--ink); }
+
+  /* The submitted list reads as a plain list here, not a queue column. */
+  .submitted {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    display: grid;
+    grid-template-rows: auto 1fr;
+  }
+  .submitted > h2 {
+    margin: 0;
+    padding: 10px 13px;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .submitted .cards { padding: 12px; }
+  .submitted .cards:empty::after { content: 'Nothing submitted yet'; }
+</style>
+</head>
+<body class="no-sidebar">
+<header>
+  <div class="brand">Text Display <small id="version"></small></div>
+  <nav class="tabs">
+    <a class="tab" href="/submit">Submit <span class="pill" data-tabcount="review">0</span></a>
+    <a class="tab" href="/admin">Live Board <span class="pill" data-tabcount="onair">0</span></a>
+    <a class="tab" href="/parked">Parked &amp; Archive <span class="pill" data-tabcount="offair">0</span></a>
+  </nav>
+  <span class="dot" id="status">connecting</span>
+  <div class="spacer"></div>
+</header>
+
+<main>
+  <div class="sheet">
+    <div class="paste-box">
+      <h1>Paste messages to send for review</h1>
+      <textarea id="paste" placeholder="Paste one or more messages here." autofocus></textarea>
+      <div class="paste-actions">
+        <button class="btn primary" id="submit">Submit for review</button>
+        <label class="split">
+          <input type="checkbox" id="per-line" checked>
+          Treat each line as its own message
+        </label>
+        <span class="spacer"></span>
+        <span id="count"></span>
+      </div>
+    </div>
+
+    <section id="queues" class="submitted">
+      <h2>Submitted - waiting for review <span class="count" data-count="review">0</span></h2>
+      <div class="cards" data-cards="review" data-simple="1"></div>
+    </section>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script src="/common.js"></script>
+<script>
+'use strict';
+
+const box = $('#paste');
+const perLine = $('#per-line');
+
+// Per line: every non-empty line is a message, which is what pasting a list
+// produces. Otherwise the whole box is one message, so a text that runs over
+// several lines stays intact.
+function parseTexts() {
+  const raw = box.value;
+  if (!raw.trim()) return [];
+  if (perLine.checked) {
+    return raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  }
+  return [raw.trim()];
+}
+
+function updateCount() {
+  const n = parseTexts().length;
+  const el = $('#count');
+  if (!n) {
+    el.textContent = '';
+    return;
+  }
+  el.innerHTML = '';
+  const strong = document.createElement('strong');
+  strong.textContent = n;
+  el.append('Will submit ', strong, n === 1 ? ' message' : ' messages');
+}
+
+box.addEventListener('input', updateCount);
+perLine.addEventListener('change', updateCount);
+
+async function submit() {
+  const texts = parseTexts();
+  if (!texts.length) return TD.toast('Paste something first', true);
+
+  const btn = $('#submit');
+  btn.disabled = true;
+  try {
+    const result = await TD.api('messages/paste', {
+      method: 'POST',
+      body: JSON.stringify({ texts }),
+    });
+    // Only clear the box once the server has them, so nothing is lost if the
+    // submission fails.
+    box.value = '';
+    updateCount();
+    box.focus();
+    TD.toast(result.created + (result.created === 1 ? ' message' : ' messages') + ' sent for review');
+  } catch (err) {
+    TD.toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$('#submit').addEventListener('click', submit);
+
+// Ctrl+Enter submits, since the textarea itself needs the Enter key.
+box.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    submit();
+  }
+});
+
+TD.start();
+</script>
+</body>
+</html>
