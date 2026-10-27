@@ -40,13 +40,27 @@
     transform-origin: top left;
   }
 
+  /* The preview is pinned as the first row and the rest scrolls underneath,
+     so opening a settings panel cannot push what is on air off the top or
+     squeeze it. The aside itself never scrolls. */
   aside {
     border-left: 1px solid var(--line);
     background: var(--panel);
-    overflow-y: auto;
     min-height: 0;
     padding: 12px;
-    display: grid; gap: 12px; align-content: start;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 12px;
+    overflow: hidden;
+  }
+  #sidebar-scroll {
+    min-height: 0;
+    overflow-y: auto;
+    display: grid;
+    gap: 12px;
+    align-content: start;
+    /* Room for the scrollbar so it never sits on top of a control. */
+    padding-right: 2px;
   }
   /* The feed either is or is not on the network, and the operator needs to
      know which without walking to the rack. */
@@ -132,6 +146,10 @@
         <iframe id="preview-frame" src="/display?preview=1" title="Display preview"></iframe>
       </div>
     </div>
+
+    <!-- Everything below the preview scrolls; the preview itself does not,
+         so opening a panel never pushes what is on air out of sight. -->
+    <div id="sidebar-scroll">
 
     <details class="group" id="compose">
       <summary>Add a message by hand</summary>
@@ -224,6 +242,8 @@
     <div class="row">
       <button class="btn danger" id="reset-settings">Reset display styling</button>
     </div>
+
+    </div><!-- /sidebar-scroll -->
   </aside>
 </main>
 
@@ -754,7 +774,15 @@ function fitPreview() {
   const available = $('#preview-wrap').clientWidth;
   if (!available) return;
 
-  const scale = Math.min(available / width, PREVIEW_MAX_HEIGHT / height);
+  // The preview is pinned above a scrolling panel, so it must leave that
+  // panel something to work with on a short window - a tall portrait feed
+  // would otherwise take the lot.
+  const sidebar = document.querySelector('aside').clientHeight;
+  const ceiling = sidebar
+    ? Math.max(120, Math.min(PREVIEW_MAX_HEIGHT, sidebar * 0.45))
+    : PREVIEW_MAX_HEIGHT;
+
+  const scale = Math.min(available / width, ceiling / height);
   previewStage.style.height = Math.round(height * scale) + 'px';
 
   // Centre it when a tall feed is limited by height rather than width.
@@ -765,7 +793,12 @@ function fitPreview() {
   if (label) label.textContent = width + ' × ' + height;
 }
 
-new ResizeObserver(fitPreview).observe($('#preview-wrap'));
+// The wrapper reports width changes; the aside reports the window getting
+// shorter, which changes how much height the preview may take. Neither is
+// resized by fitPreview itself, so there is no feedback loop.
+const refit = new ResizeObserver(fitPreview);
+refit.observe($('#preview-wrap'));
+refit.observe(document.querySelector('aside'));
 fitPreview();
 
 /* ---------- wire up ---------- */
