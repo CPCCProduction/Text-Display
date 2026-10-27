@@ -16,6 +16,18 @@ COPY package.json ./
 COPY src/ ./src/
 COPY public/ ./public/
 
+# There is no .git in the image, so which commit this is has to be baked in.
+# The deploy script fills these from the checkout it built from, and the admin
+# header shows them - that is how you tell whether a push actually went live.
+ARG GIT_COMMIT=""
+ARG GIT_BRANCH=""
+ARG GIT_COMMITTED_AT=""
+ARG BUILD_TIME=""
+ENV GIT_COMMIT=$GIT_COMMIT \
+    GIT_BRANCH=$GIT_BRANCH \
+    GIT_COMMITTED_AT=$GIT_COMMITTED_AT \
+    BUILD_TIME=$BUILD_TIME
+
 # Message history and settings live on a volume so an image rebuild never
 # takes the church's data with it.
 ENV TEXT_DISPLAY_DATA=/data

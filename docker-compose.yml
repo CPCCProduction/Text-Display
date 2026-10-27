@@ -1,6 +1,14 @@
 services:
   text-display:
-    build: .
+    build:
+      context: .
+      args:
+        # Filled in by deploy.sh from the checkout being built, so the admin
+        # header can say exactly which commit is live.
+        GIT_COMMIT: "${GIT_COMMIT:-}"
+        GIT_BRANCH: "${GIT_BRANCH:-}"
+        GIT_COMMITTED_AT: "${GIT_COMMITTED_AT:-}"
+        BUILD_TIME: "${BUILD_TIME:-}"
     image: text-display:latest
     container_name: text-display
     restart: unless-stopped

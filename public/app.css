@@ -38,7 +38,21 @@ body > header {
   border-bottom: 1px solid var(--line);
 }
 .brand { font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
-.brand small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+.brand small {
+  color: var(--muted);
+  font-weight: 400;
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+/* Running from a working copy rather than a built image. Worth a glance when
+   you are looking at two tabs and wondering which is the server. */
+.brand small.dev {
+  color: var(--warn);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 5px;
+}
 .spacer { flex: 1; }
 .dot {
   display: inline-flex; align-items: center; gap: 6px;

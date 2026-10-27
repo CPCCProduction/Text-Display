@@ -10,6 +10,7 @@ const store = require('./store');
 const settings = require('./settings');
 const config = require('./config');
 const pkg = require('../package.json');
+const version = require('./version');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -120,6 +121,7 @@ function createServer() {
   function snapshot() {
     return {
       version: pkg.version,
+      build: version.info,
       settings: settings.get(),
       counts: store.counts(),
       live: store.liveQueue(),

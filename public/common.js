@@ -221,6 +221,36 @@ function renderQueues() {
 }
 TD.renderQueues = renderQueues;
 
+/* ---------- which version is running ---------- */
+
+// The app is deployed by pulling a commit onto a server, so "is the change I
+// pushed actually live?" has to be answerable from the page itself.
+function renderVersion(build, fallbackVersion) {
+  const el = $('#version');
+  if (!el) return;
+
+  if (!build) {
+    el.textContent = 'v' + (fallbackVersion || '');
+    return;
+  }
+
+  el.textContent = 'v' + build.version + (build.commit ? ' · ' + build.commit : '')
+    // A trailing + means the working copy had uncommitted edits, so what is
+    // running is not exactly the commit named.
+    + (build.dirty ? '+' : '');
+
+  const lines = ['Version ' + build.version];
+  if (build.commit) lines.push('Commit ' + build.commit + (build.dirty ? ' (plus uncommitted changes)' : ''));
+  if (build.branch) lines.push('Branch ' + build.branch);
+  if (build.committedAt) lines.push('Committed ' + new Date(build.committedAt).toLocaleString());
+  if (build.builtAt) lines.push('Image built ' + new Date(build.builtAt).toLocaleString());
+  lines.push('Running from ' + (build.source === 'container' ? 'a container image' : 'source'));
+  if (build.startedAt) lines.push('Started ' + new Date(build.startedAt).toLocaleString());
+  el.title = lines.join('\n');
+
+  el.classList.toggle('dev', build.source !== 'container');
+}
+
 /* ---------- the on-screen marker ---------- */
 
 // A display that has gone away stops sending its heartbeat, and a stale
@@ -408,8 +438,7 @@ async function load() {
       TD.state = await api('state');
       TD.settings = TD.state.settings;
       TD.options = TD.state.options || TD.options;
-      const version = $('#version');
-      if (version) version.textContent = 'v' + TD.state.version;
+      renderVersion(TD.state.build, TD.state.version);
       renderQueues();
       for (const fn of TD.hooks) {
         try {
