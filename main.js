@@ -158,6 +158,22 @@ function registerSetupHandlers() {
   ipcMain.handle('setup:close', () => {
     if (setupWindow && !setupWindow.isDestroyed()) setupWindow.close();
   });
+
+  // Asked for by the admin page when it is running inside the app.
+  ipcMain.handle('shell:info', () => {
+    const status = ndi ? ndi.status() : null;
+    return {
+      hostname: os.hostname(),
+      server: REMOTE_SERVER || null,
+      role: REMOTE_SERVER ? 'sender' : 'host',
+      ndiAvailable: Boolean(status && status.available),
+      ndiError: status ? status.error : null,
+    };
+  });
+
+  ipcMain.handle('shell:openSetup', () => {
+    createSetupWindow();
+  });
 }
 
 // Only one instance may own the port; a second launch focuses the first.
@@ -221,7 +237,13 @@ function createAdminWindow() {
       ? `${pkg.productName} - NDI sender for ${REMOTE_SERVER}`
       : `${pkg.productName} - Admin`,
     autoHideMenuBar: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: {
+      // Lets the admin page offer this machine's own settings when it is
+      // running in the app rather than a browser.
+      preload: path.join(__dirname, 'preload-admin.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
   });
 
   // Has to be reapplied per navigation, not just once at startup.

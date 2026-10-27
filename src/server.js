@@ -215,6 +215,7 @@ function createServer() {
         fullName: str(payload.fullName, 160),
         connections: Number(payload.connections) || 0,
         framesCaptured: Number(payload.framesCaptured) || 0,
+        recoveries: Number(payload.recoveries) || 0,
         framesSent: Number(payload.framesSent) || 0,
         since: str(payload.since, 40),
         library: str(payload.library, 400),

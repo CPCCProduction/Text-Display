@@ -209,6 +209,15 @@
           another computer on the network.
         </div>
         <div class="note" id="urls"></div>
+
+        <!-- Only shown when the admin page is open inside the desktop app;
+             in a browser there is no local machine to configure. -->
+        <div id="shell-box" hidden>
+          <div class="note" id="shell-role"></div>
+          <div class="row">
+            <button class="btn sm" id="open-setup">Setup - server address...</button>
+          </div>
+        </div>
       </div>
     </details>
 
@@ -575,6 +584,9 @@ function renderNdiStatus(status) {
   add('Source: ' + (s.fullName || s.sourceName));
   add(s.connections === 1 ? '1 receiver connected' : s.connections + ' receivers connected');
   add(s.framesSent.toLocaleString() + ' frames sent');
+  // A feed that keeps restarting itself is a machine in trouble, not a
+  // healthy one, so say so even though it is currently on air.
+  if (s.recoveries) add('Restarted ' + s.recoveries + ' time(s) after a renderer crash', 'bad-text');
   if (s.libraryVersion) add(s.libraryVersion);
 }
 
@@ -678,6 +690,45 @@ $('#reset-settings').addEventListener('click', async () => {
     TD.toast(err.message, true);
   }
 });
+
+/* ---------- this machine (desktop app only) ---------- */
+
+// window.textDisplayShell is injected by the app's preload. In a browser it
+// is absent, and the whole block stays hidden - there is no local machine to
+// configure from a browser tab on someone else's desk.
+async function initShellBox() {
+  const shell = window.textDisplayShell;
+  if (!shell || !shell.isApp) return;
+
+  const box = $('#shell-box');
+  const role = $('#shell-role');
+
+  async function paint() {
+    let info;
+    try {
+      info = await shell.info();
+    } catch {
+      return;
+    }
+
+    const lines = [];
+    lines.push(info.role === 'sender'
+      ? `This computer (${info.hostname}) is sending NDI for ${info.server}`
+      : `This computer (${info.hostname}) is hosting the app`);
+    if (!info.ndiAvailable) {
+      lines.push('NDI runtime not found - install NDI Tools to send a feed.');
+    }
+    role.textContent = lines.join(' ');
+    box.hidden = false;
+  }
+
+  $('#open-setup').addEventListener('click', () => shell.openSetup());
+  await paint();
+  // The address can change while this page is open, if setup is used.
+  setInterval(paint, 5000);
+}
+
+initShellBox();
 
 /* ---------- preview scaling ---------- */
 

@@ -44,6 +44,9 @@ class NdiOutput {
     this.framesCaptured = 0;
     this.framesSent = 0;
     this.lastError = null;
+    // Crash recovery state; see recover().
+    this.recovering = false;
+    this.recoveries = 0;
     this.startedAt = null;
 
     const lib = ndiLib.load();
@@ -76,6 +79,7 @@ class NdiOutput {
       fullName: this.sender && this.lib ? `${this.lib.host} (${this.sender.name})` : null,
       connections: this.sender ? this.sender.connections() : 0,
       framesCaptured: this.framesCaptured,
+      recoveries: this.recoveries,
       framesSent: this.framesSent,
       since: this.startedAt,
       library: this.libPath,
@@ -117,6 +121,7 @@ class NdiOutput {
       if (sizeChanged || nameChanged || !this.sender) this.openSender();
       this.startPump();
       this.lastError = null;
+      this.recoveries = 0;
     } catch (err) {
       this.lastError = err.message;
       this.stop(true);
@@ -164,8 +169,53 @@ class NdiOutput {
       this.report();
     });
 
+    // A graphics driver reset takes the renderer down with it, and an
+    // offscreen window that has died stops painting silently: NDI keeps
+    // sending the last frame it was given, so the feed freezes on a stale
+    // image rather than going away. Rebuild instead of sitting there.
+    this.window.webContents.on('render-process-gone', (_event, details) => {
+      this.lastError = `The renderer stopped (${details.reason}); restarting the feed.`;
+      this.report();
+      this.recover();
+    });
+
+    this.window.on('unresponsive', () => {
+      this.lastError = 'The renderer stopped responding; restarting the feed.';
+      this.report();
+      this.recover();
+    });
+
     // ndi=1 keeps the page from drawing the disconnected badge over the feed.
     this.window.loadURL(`${this.displayUrl}?ndi=1`);
+  }
+
+  // Rebuilds the capture side after a crash, backing off so a machine whose
+  // graphics driver is in trouble is not hammered into a restart loop.
+  recover() {
+    if (this.recovering || !this.config || !this.config.enabled) return;
+    this.recovering = true;
+
+    const attempt = (this.recoveries || 0) + 1;
+    this.recoveries = attempt;
+    const delay = Math.min(30000, 2000 * attempt);
+
+    this.stopPump();
+    this.latest = null;
+
+    setTimeout(() => {
+      this.recovering = false;
+      if (!this.config || !this.config.enabled) return;
+      try {
+        this.openWindow();
+        this.startPump();
+        this.lastError = null;
+      } catch (err) {
+        this.lastError = `Could not restart the feed: ${err.message}`;
+        // Another go, unless this has become hopeless.
+        if (attempt < 10) this.recover();
+      }
+      this.report();
+    }, delay).unref?.();
   }
 
   openSender() {

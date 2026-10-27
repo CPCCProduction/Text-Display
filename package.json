@@ -30,6 +30,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "preload-admin.js",
       "src/**/*",
       "public/**/*",
       "package.json",
