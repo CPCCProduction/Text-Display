@@ -42,10 +42,46 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
+// Disabling display scaling keeps the NDI feed pixel-exact, but it also makes
+// every window render at 100%, which on a high-resolution screen leaves the
+// admin UI far too small. Windows is asked what the desktop's own scaling is
+// so the interface can be put back to the size it should have been.
+//
+// Electron reports physical pixels once scaling is forced off; a plain
+// PowerShell process is DPI-unaware and reports the logical desktop, and the
+// ratio between them is the scaling the user actually chose.
+let uiScale = 1;
+
+function detectUiScale() {
+  if (process.platform !== 'win32') return 1;
+  try {
+    const { execFileSync } = require('node:child_process');
+    const out = execFileSync('powershell', [
+      '-NoProfile', '-NonInteractive', '-Command',
+      'Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width',
+    ], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+
+    const logical = Number(String(out).trim());
+    const physical = screen.getPrimaryDisplay().size.width;
+    if (!logical || !physical) return 1;
+
+    // Windows offers scaling in quarter steps, so snap to one rather than
+    // trusting a ratio that rounding has nudged off.
+    const snapped = Math.round((physical / logical) * 4) / 4;
+    return snapped >= 1 && snapped <= 3 ? snapped : 1;
+  } catch {
+    // Not worth failing to start over: 100% is merely small, not broken.
+    return 1;
+  }
+}
+
 function createAdminWindow() {
+  const work = screen.getPrimaryDisplay().workAreaSize;
   adminWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    // Zooming the contents shows proportionally less of them, so the window
+    // grows with the zoom to keep the same amount of panel on screen.
+    width: Math.min(Math.round(1400 * uiScale), work.width),
+    height: Math.min(Math.round(900 * uiScale), work.height),
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#0b1020',
@@ -53,6 +89,12 @@ function createAdminWindow() {
     autoHideMenuBar: false,
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
+
+  // Has to be reapplied per navigation, not just once at startup.
+  adminWindow.webContents.on('did-finish-load', () => {
+    adminWindow.webContents.setZoomFactor(uiScale);
+  });
+
   adminWindow.loadURL(`${baseUrl}/admin`);
   adminWindow.on('closed', () => {
     adminWindow = null;
@@ -230,6 +272,9 @@ app.whenReady().then(async () => {
     }
     baseUrl = `http://localhost:${server.address().port}`;
   }
+
+  uiScale = detectUiScale();
+  console.log(`[ui] desktop scaling detected as ${Math.round(uiScale * 100)}%`);
 
   ndi = startNdiClient({
     serverUrl: baseUrl,

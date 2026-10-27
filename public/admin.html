@@ -24,10 +24,12 @@
      gives the iframe a real 1920x1080 viewport and scales the whole frame
      down. Sizing the iframe to the sidebar instead would render 48px text
      into a 350px box - a crop, not a preview. */
+  /* Height and scale are set from the feed's resolution in fitPreview();
+     these are only the values used before the first measurement. */
   #preview-stage {
     position: relative;
     width: 100%;
-    aspect-ratio: 16 / 9;
+    height: 191px;
     overflow: hidden;
   }
   #preview-frame {
@@ -125,7 +127,7 @@
 
   <aside>
     <div id="preview-wrap">
-      <div class="head">Live preview <span class="note">1920 x 1080</span></div>
+      <div class="head">Live preview <span class="note" id="preview-size">1920 &times; 1080</span></div>
       <div id="preview-stage">
         <iframe id="preview-frame" src="/display?preview=1" title="Display preview"></iframe>
       </div>
@@ -146,7 +148,7 @@
     <div id="settings-groups"></div>
 
     <details class="group" id="ndi-group">
-      <summary>NDI output</summary>
+      <summary>NDI output <span class="badge" id="ndi-badge">off</span></summary>
       <div class="fields" id="ndi-fields">
         <div class="field">
           <label for="ndi-enabled">Send the feed</label>
@@ -425,7 +427,23 @@ $('#compose-live').addEventListener('click', () => compose(true));
 
 const PRESETS = ['1920x1080', '1280x720', '3840x2160', '1080x1920'];
 let ndiConfig = null;
+let ndiLastStatus = null;
 let fpsBuilt = false;
+
+// The panel is collapsed by default, so the summary carries the setting that
+// gets asked about most: what size the feed is going out at.
+function updateNdiBadge() {
+  const badge = $('#ndi-badge');
+  if (!badge || !ndiConfig) return;
+  const size = ndiConfig.width + '×' + ndiConfig.height;
+  const s = ndiLastStatus || {};
+  const live = s.at && Date.now() - s.at < NDI_STALE_MS && s.running && !s.error;
+
+  badge.classList.toggle('live', Boolean(live));
+  if (!ndiConfig.enabled) badge.textContent = size + ' · off';
+  else if (live) badge.textContent = size + ' · on air';
+  else badge.textContent = size + ' · idle';
+}
 
 function ndiFromForm() {
   const preset = $('#ndi-preset').value;
@@ -478,6 +496,10 @@ function syncNdiForm(cfg) {
   set('#ndi-width', 'value', cfg.width);
   set('#ndi-height', 'value', cfg.height);
   $('#ndi-custom').hidden = preset !== 'custom';
+
+  updateNdiBadge();
+  // The preview frames the feed, so it has to follow the feed's size.
+  fitPreview();
 }
 
 // A sender that has stopped reporting is not a sender that is working, so the
@@ -490,6 +512,8 @@ function renderNdiStatus(status) {
   host.className = 'ndi-status';
 
   const s = status || {};
+  ndiLastStatus = s;
+  updateNdiBadge();
   const fresh = s.at && Date.now() - s.at < NDI_STALE_MS;
 
   const lamp = document.createElement('div');
@@ -634,18 +658,40 @@ $('#reset-settings').addEventListener('click', async () => {
 
 /* ---------- preview scaling ---------- */
 
-// The iframe is a fixed 1920x1080; scale it to whatever width the sidebar
-// currently gives us so the preview stays a faithful miniature.
+// The preview is the display page rendered at the feed's own resolution and
+// then scaled to fit the sidebar. It has to be the real size rather than a
+// convenient one: text is sized in pixels, so 72px type fills a third of a
+// 1280-wide frame and a sixth of a 4K one. Rendering at the wrong size would
+// show the wrong amount of text on a line.
 const previewStage = $('#preview-stage');
 const previewFrame = $('#preview-frame');
 
+const PREVIEW_MAX_HEIGHT = 420;   // a portrait feed must not swallow the sidebar
+
 function fitPreview() {
-  const width = previewStage.clientWidth;
-  if (!width) return;
-  previewFrame.style.transform = 'scale(' + (width / 1920) + ')';
+  const cfg = ndiConfig || { width: 1920, height: 1080 };
+  const { width, height } = cfg;
+
+  previewFrame.style.width = width + 'px';
+  previewFrame.style.height = height + 'px';
+
+  // Measured from the wrapper, not the stage: the stage's own height is set
+  // below, and observing it would feed back into the resize observer.
+  const available = $('#preview-wrap').clientWidth;
+  if (!available) return;
+
+  const scale = Math.min(available / width, PREVIEW_MAX_HEIGHT / height);
+  previewStage.style.height = Math.round(height * scale) + 'px';
+
+  // Centre it when a tall feed is limited by height rather than width.
+  const offset = Math.max(0, (available - width * scale) / 2);
+  previewFrame.style.transform = 'translateX(' + offset + 'px) scale(' + scale + ')';
+
+  const label = $('#preview-size');
+  if (label) label.textContent = width + ' × ' + height;
 }
 
-new ResizeObserver(fitPreview).observe(previewStage);
+new ResizeObserver(fitPreview).observe($('#preview-wrap'));
 fitPreview();
 
 /* ---------- wire up ---------- */
