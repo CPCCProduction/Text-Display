@@ -26,5 +26,8 @@ module.exports = {
   MESSAGES_FILE: path.join(DATA_DIR, 'messages.json'),
   SETTINGS_FILE: path.join(DATA_DIR, 'settings.json'),
   CONFIG_FILE: path.join(DATA_DIR, 'config.json'),
+  // Which server this machine sends NDI for. Local to the machine, not part
+  // of the shared settings: two booth PCs could point at the same server.
+  SENDER_FILE: path.join(DATA_DIR, 'sender.json'),
   PUBLIC_DIR: path.join(__dirname, '..', 'public'),
 };

@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Text Display - Setup</title>
+<style>
+  /* Self-contained on purpose: this window has to work when the server is
+     unreachable, which is exactly when someone opens it. */
+  :root {
+    color-scheme: dark;
+    --bg: #0b1020;
+    --panel: #141a2e;
+    --panel-2: #1b2340;
+    --line: #26304f;
+    --ink: #e8ecf8;
+    --muted: #8b96b8;
+    --accent: #4da3ff;
+    --ok: #35c98a;
+    --warn: #f0b429;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.5 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    padding: 20px 22px 24px;
+  }
+  h1 { margin: 0 0 2px; font-size: 18px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 18px; }
+
+  fieldset {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    padding: 12px 14px 14px;
+    margin: 0 0 14px;
+  }
+  legend { padding: 0 6px; font-weight: 600; font-size: 13px; color: var(--muted); }
+
+  .mode { display: grid; gap: 8px; }
+  .mode label {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 9px;
+    align-items: start;
+    padding: 9px 11px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: var(--panel-2);
+    cursor: pointer;
+  }
+  .mode label:hover { border-color: var(--accent); }
+  .mode label.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .mode input { margin-top: 3px; }
+  .mode .what { font-weight: 600; }
+  .mode .why { color: var(--muted); font-size: 12px; }
+
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+  input[type=text] {
+    flex: 1;
+    background: #0d1224;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 10px;
+    color: inherit;
+    font: inherit;
+  }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+  input[type=text]:disabled { opacity: 0.45; }
+
+  button {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 14px;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.primary { background: #1d4f86; border-color: #2a6cb0; }
+  button.ok { background: #1c5f45; border-color: #2b7f5d; }
+
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .result { margin-top: 10px; font-size: 13px; min-height: 20px; }
+  .result.good { color: var(--ok); }
+  .result.bad { color: #ffbcbc; }
+  .result.busy { color: var(--muted); }
+
+  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; }
+  dd.good { color: var(--ok); }
+  dd.bad { color: #ffbcbc; }
+  dd.warn { color: var(--warn); }
+
+  footer { display: flex; gap: 8px; align-items: center; margin-top: 18px; }
+  footer .spacer { flex: 1; }
+  .banner {
+    background: #3a2d10;
+    border: 1px solid #90691a;
+    color: #ffe3a6;
+    border-radius: 7px;
+    padding: 9px 12px;
+    font-size: 13px;
+    margin-bottom: 14px;
+    display: none;
+  }
+  .banner.show { display: block; }
+</style>
+</head>
+<body>
+
+<h1>Text Display setup</h1>
+<div class="sub" id="machine"></div>
+
+<div class="banner" id="restart-banner">
+  Saved. The change takes effect when the app restarts.
+</div>
+
+<fieldset>
+  <legend>What should this computer do?</legend>
+  <div class="mode">
+    <label id="mode-sender-label">
+      <input type="radio" name="mode" value="sender" id="mode-sender">
+      <span>
+        <span class="what">Send NDI for a hosted server</span><br>
+        <span class="why">The app runs somewhere else. This machine renders the
+        display page and puts it on the video network as NDI.</span>
+      </span>
+    </label>
+    <label id="mode-local-label">
+      <input type="radio" name="mode" value="local" id="mode-local">
+      <span>
+        <span class="what">Host the app on this computer</span><br>
+        <span class="why">This machine runs the server itself, and can still
+        send NDI. Use this when there is no separate server.</span>
+      </span>
+    </label>
+  </div>
+
+  <div class="row">
+    <input type="text" id="server" placeholder="http://10.101.6.12:4321" spellcheck="false">
+    <button id="test">Test</button>
+  </div>
+  <div class="hint">The address of the machine running the app, including the port.</div>
+  <div class="result" id="test-result"></div>
+</fieldset>
+
+<fieldset>
+  <legend>This machine</legend>
+  <dl>
+    <dt>App version</dt><dd id="i-version">-</dd>
+    <dt>NDI runtime</dt><dd id="i-ndi">-</dd>
+    <dt>Feed</dt><dd id="i-feed">-</dd>
+  </dl>
+  <div class="hint">
+    Feed name, resolution and alpha are set in the admin panel, not here -
+    they belong to the server so any machine can change them.
+  </div>
+</fieldset>
+
+<footer>
+  <button id="admin">Open admin panel</button>
+  <span class="spacer"></span>
+  <button id="close">Close</button>
+  <button id="save" class="primary">Save</button>
+  <button id="restart" class="ok" style="display:none">Save &amp; restart</button>
+</footer>
+
+<script>
+'use strict';
+
+const $ = (s) => document.querySelector(s);
+let initial = null;
+
+function selectedMode() {
+  return $('#mode-sender').checked ? 'sender' : 'local';
+}
+
+function paintMode() {
+  const mode = selectedMode();
+  $('#mode-sender-label').classList.toggle('on', mode === 'sender');
+  $('#mode-local-label').classList.toggle('on', mode === 'local');
+  // A local host has no server address to type.
+  $('#server').disabled = mode !== 'sender';
+  $('#test').disabled = mode !== 'sender';
+}
+
+function show(el, text, kind) {
+  el.textContent = text;
+  el.className = 'result' + (kind ? ' ' + kind : '');
+}
+
+async function load() {
+  const data = await window.setup.load();
+  initial = data;
+
+  $('#machine').textContent = data.hostname
+    ? 'on ' + data.hostname
+    : '';
+  $('#server').value = data.server || '';
+  $('#mode-sender').checked = Boolean(data.server);
+  $('#mode-local').checked = !data.server;
+  paintMode();
+
+  $('#i-version').textContent = 'v' + data.version + (data.commit ? ' · ' + data.commit : '');
+
+  const ndi = $('#i-ndi');
+  if (data.ndi && data.ndi.available) {
+    ndi.textContent = data.ndi.libraryVersion || 'found';
+    ndi.className = 'good';
+  } else {
+    ndi.textContent = (data.ndi && data.ndi.error) || 'not found - install NDI Tools';
+    ndi.className = 'bad';
+  }
+
+  const feed = $('#i-feed');
+  const s = data.ndi || {};
+  if (!s.available) { feed.textContent = '-'; feed.className = ''; }
+  else if (s.error) { feed.textContent = s.error; feed.className = 'bad'; }
+  else if (s.running) {
+    feed.textContent = s.fullName + '  ' + (s.actualSize || '') + '  ' + s.connections + ' receiver(s)';
+    feed.className = 'good';
+  } else { feed.textContent = 'not sending (switch it on in the admin panel)'; feed.className = 'warn'; }
+}
+
+$('#mode-sender').addEventListener('change', paintMode);
+$('#mode-local').addEventListener('change', paintMode);
+
+$('#test').addEventListener('click', async () => {
+  const url = $('#server').value.trim();
+  show($('#test-result'), 'Trying ' + url + ' ...', 'busy');
+  const r = await window.setup.test(url);
+  if (r.ok) {
+    show($('#test-result'),
+      'Reached it: v' + r.version + (r.commit ? ' · ' + r.commit : '')
+      + ', ' + r.live + ' message(s) on screen.', 'good');
+  } else {
+    show($('#test-result'), 'No answer: ' + r.error, 'bad');
+  }
+});
+
+async function save() {
+  const mode = selectedMode();
+  const server = mode === 'sender' ? $('#server').value.trim() : '';
+  if (mode === 'sender' && !server) {
+    show($('#test-result'), 'Enter the server address first.', 'bad');
+    return false;
+  }
+  await window.setup.save({ mode, server });
+
+  // Only a change of role or address needs the app restarted; saying so only
+  // when it is true keeps the prompt meaningful.
+  const changed = (initial.server || '') !== server;
+  if (changed) {
+    $('#restart-banner').classList.add('show');
+    $('#restart').style.display = '';
+  } else {
+    show($('#test-result'), 'Saved.', 'good');
+  }
+  return true;
+}
+
+$('#save').addEventListener('click', save);
+$('#restart').addEventListener('click', async () => {
+  if (await save()) window.setup.restart();
+});
+$('#admin').addEventListener('click', () => window.setup.openAdmin());
+$('#close').addEventListener('click', () => window.setup.close());
+
+load();
+</script>
+</body>
+</html>

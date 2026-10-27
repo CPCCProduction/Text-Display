@@ -3,19 +3,58 @@
 // then wraps the admin panel and the display page in windows. Everything the
 // windows do goes through HTTP, so a browser source on another machine behaves
 // identically to the built-in display window.
-const { app, BrowserWindow, Menu, shell, clipboard, dialog, screen } = require('electron');
+const { app, BrowserWindow, Menu, shell, clipboard, dialog, screen, ipcMain } = require('electron');
+const path = require('node:path');
+const os = require('node:os');
+const { existsSync: fsExists } = require('node:fs');
 
 const { listen } = require('./src/server');
 const config = require('./src/config');
 const settings = require('./src/settings');
 const { startNdiClient } = require('./src/ndi-client');
+const { SENDER_FILE } = require('./src/paths');
+const { readJson, writeJson } = require('./src/jsonfile');
 const pkg = require('./package.json');
 
-// Point this at the server to run as a booth sender beside a hosted app:
-//   TEXT_DISPLAY_SERVER=http://textdisplay.lan:4321
-// With it set, no local server starts - this process renders the hosted
-// display page and puts it on the network as NDI.
-const REMOTE_SERVER = (process.env.TEXT_DISPLAY_SERVER || '').trim().replace(/\/+$/, '');
+// A booth machine runs this beside a hosted app: no local server, just the
+// hosted display page rendered offscreen and put on the network as NDI.
+//
+//   "Text Display.exe" --server=http://10.101.6.12:4321   set it, and remember
+//   "Text Display.exe"                                    use what was remembered
+//   "Text Display.exe" --local                            forget it, host locally
+//
+// Remembering it matters: a booth PC is set up once and then just started
+// from a shortcut, and an environment variable is an awkward thing to carry.
+function resolveServer() {
+  const args = process.argv.slice(1);
+  const flag = args.find((a) => a.startsWith('--server='));
+  const local = args.includes('--local');
+
+  const clean = (value) => String(value || '').trim().replace(/\/+$/, '');
+
+  if (local) {
+    try {
+      writeJson(SENDER_FILE, {});
+    } catch { /* nothing remembered is the same as forgetting it */ }
+    return '';
+  }
+
+  const given = clean(flag ? flag.slice('--server='.length) : process.env.TEXT_DISPLAY_SERVER);
+  if (given) {
+    try {
+      writeJson(SENDER_FILE, { server: given });
+    } catch { /* it still works this run, just not the next */ }
+    return given;
+  }
+
+  try {
+    return clean(readJson(SENDER_FILE, {}).server);
+  } catch {
+    return '';
+  }
+}
+
+const REMOTE_SERVER = resolveServer();
 
 // Windows sizes windows in logical pixels, so on a machine running at 150%
 // an offscreen window asked for 1280x720 rasterises to 1920x1080 and the NDI
@@ -28,7 +67,98 @@ let server = null;
 let baseUrl = '';
 let adminWindow = null;
 let displayWindow = null;
+let setupWindow = null;
 let ndi = null;
+
+// Setting this machine's role from a window rather than a command line: a
+// booth PC is configured once by whoever is standing in front of it.
+function createSetupWindow() {
+  if (setupWindow && !setupWindow.isDestroyed()) {
+    setupWindow.show();
+    setupWindow.focus();
+    return setupWindow;
+  }
+
+  setupWindow = new BrowserWindow({
+    width: Math.round(620 * uiScale),
+    height: Math.round(680 * uiScale),
+    resizable: true,
+    minimizable: false,
+    maximizable: false,
+    backgroundColor: '#0b1020',
+    title: `${pkg.productName} - Setup`,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  setupWindow.webContents.on('did-finish-load', () => {
+    setupWindow.webContents.setZoomFactor(uiScale);
+  });
+  setupWindow.loadFile(path.join(__dirname, 'public', 'setup.html'));
+  setupWindow.on('closed', () => {
+    setupWindow = null;
+  });
+  return setupWindow;
+}
+
+function registerSetupHandlers() {
+  ipcMain.handle('setup:load', () => ({
+    hostname: os.hostname(),
+    server: REMOTE_SERVER,
+    version: pkg.version,
+    commit: require('./src/version').info.commit,
+    ndi: ndi ? ndi.status() : null,
+  }));
+
+  ipcMain.handle('setup:test', async (_event, url) => {
+    const target = String(url || '').trim().replace(/\/+$/, '');
+    if (!target) return { ok: false, error: 'Enter a server address' };
+    try {
+      const res = await fetch(`${target}/api/state`, { signal: AbortSignal.timeout(6000) });
+      if (!res.ok) return { ok: false, error: `the server answered ${res.status}` };
+      const data = await res.json();
+      return {
+        ok: true,
+        version: (data.build && data.build.version) || data.version,
+        commit: (data.build && data.build.commit) || null,
+        live: (data.counts && data.counts.live) || 0,
+      };
+    } catch (err) {
+      // A bad address, a stopped container and a blocked port all land here,
+      // so pass the real message through rather than inventing one.
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('setup:save', (_event, data) => {
+    const server = data && data.mode === 'sender'
+      ? String(data.server || '').trim().replace(/\/+$/, '')
+      : '';
+    writeJson(SENDER_FILE, server ? { server } : {});
+    return { ok: true };
+  });
+
+  ipcMain.handle('setup:restart', () => {
+    // Drop any one-off flags so the restart uses what was just saved.
+    const args = process.argv.slice(1)
+      .filter((a) => !a.startsWith('--server=') && a !== '--local');
+    app.relaunch({ args });
+    app.exit(0);
+  });
+
+  ipcMain.handle('setup:openAdmin', () => {
+    if (adminWindow && !adminWindow.isDestroyed()) adminWindow.focus();
+    else createAdminWindow();
+  });
+
+  ipcMain.handle('setup:close', () => {
+    if (setupWindow && !setupWindow.isDestroyed()) setupWindow.close();
+  });
+}
 
 // Only one instance may own the port; a second launch focuses the first.
 if (!app.requestSingleInstanceLock()) {
@@ -85,7 +215,11 @@ function createAdminWindow() {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#0b1020',
-    title: `${pkg.productName} - Admin`,
+    // The title says which server it is driving, so a booth machine pointed
+    // at the wrong one is obvious at a glance.
+    title: REMOTE_SERVER
+      ? `${pkg.productName} - NDI sender for ${REMOTE_SERVER}`
+      : `${pkg.productName} - Admin`,
     autoHideMenuBar: false,
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
@@ -93,6 +227,13 @@ function createAdminWindow() {
   // Has to be reapplied per navigation, not just once at startup.
   adminWindow.webContents.on('did-finish-load', () => {
     adminWindow.webContents.setZoomFactor(uiScale);
+  });
+
+  // The page's own <title> would otherwise replace ours, losing the note
+  // about which server this machine is driving.
+  adminWindow.on('page-title-updated', (event, title) => {
+    event.preventDefault();
+    adminWindow.setTitle(REMOTE_SERVER ? `${title} - sending for ${REMOTE_SERVER}` : title);
   });
 
   adminWindow.loadURL(`${baseUrl}/admin`);
@@ -172,6 +313,12 @@ function buildMenu() {
           accelerator: 'CmdOrCtrl+2',
           click: () => createDisplayWindow(),
         },
+        { type: 'separator' },
+        {
+          label: 'Setup - server address and role...',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => createSetupWindow(),
+        },
         {
           label: 'Reload Display Window',
           click: () => rebuildDisplayWindow(),
@@ -217,20 +364,53 @@ function buildMenu() {
         {
           label: 'Show Connection Info',
           click: () => {
-            const c = config.get();
-            dialog.showMessageBox(adminWindow || undefined, {
-              type: 'info',
-              title: 'Connection Info',
-              message: `${pkg.productName} v${pkg.version}`,
-              detail: [
-                ...server.urls().flatMap((url) => [
+            const detail = [];
+
+            if (REMOTE_SERVER) {
+              // Sender mode: there is no local server to list addresses for.
+              detail.push(
+                'This machine is an NDI sender.',
+                '',
+                `Server:   ${REMOTE_SERVER}`,
+                `Submit:   ${REMOTE_SERVER}/submit`,
+                `Admin:    ${REMOTE_SERVER}/admin`,
+                `Display:  ${REMOTE_SERVER}/display`,
+                '',
+                'Start with --local to host the app on this machine instead.',
+              );
+            } else {
+              const c = config.get();
+              const urls = server ? server.urls() : [baseUrl];
+              detail.push(
+                'This machine is hosting the app.',
+                '',
+                ...urls.flatMap((url) => [
                   `Submit:   ${url}/submit`,
                   `Admin:    ${url}/admin`,
                   `Display:  ${url}/display`,
                   '',
                 ]),
                 `Admin host-only:  ${c.adminLocalhostOnly ? 'yes' : 'no'}`,
-              ].join('\n'),
+              );
+            }
+
+            const status = ndi ? ndi.status() : null;
+            detail.push('', '--- NDI ---');
+            if (!status) detail.push('Sender not started.');
+            else if (!status.available) detail.push(`Unavailable: ${status.error || 'no NDI runtime'}`);
+            else if (status.running) {
+              detail.push(
+                `On air as:  ${status.fullName}`,
+                `Resolution: ${status.actualSize || 'starting'}`,
+                `Receivers:  ${status.connections}`,
+              );
+            } else detail.push('Ready, not sending.');
+
+            dialog.showMessageBox(adminWindow || undefined, {
+              type: 'info',
+              title: 'Connection Info',
+              message: `${pkg.productName} v${pkg.version}`,
+              detail: detail.join('\n'),
             });
           },
         },
@@ -282,11 +462,29 @@ app.whenReady().then(async () => {
     log: (message) => console.log(`[ndi] ${message}`),
   });
 
+  registerSetupHandlers();
   buildMenu();
   createAdminWindow();
+
+  // Opened on request, or on a first run: nothing configured and nothing
+  // remembered means nobody has said what this machine is for yet.
+  if (process.argv.slice(1).includes('--setup') || (!REMOTE_SERVER && !firstRunAnswered())) {
+    createSetupWindow();
+  }
+
   screen.on('display-added', buildMenu);
   screen.on('display-removed', buildMenu);
 });
+
+// A machine that has been through setup once has a sender.json, even if it
+// records "host locally" as an empty object.
+function firstRunAnswered() {
+  try {
+    return fsExists(SENDER_FILE);
+  } catch {
+    return true;
+  }
+}
 
 app.on('window-all-closed', () => {
   app.quit();
