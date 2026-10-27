@@ -429,6 +429,11 @@ const PRESETS = ['1920x1080', '1280x720', '3840x2160', '1080x1920'];
 let ndiConfig = null;
 let ndiLastStatus = null;
 let fpsBuilt = false;
+// "Custom" is a choice about the form, not a value the server stores. Without
+// remembering it here, picking Custom while the size still matched a preset
+// would snap the dropdown straight back and hide the boxes again.
+let customMode = false;
+let ndiFormReady = false;
 
 // The panel is collapsed by default, so the summary carries the setting that
 // gets asked about most: what size the feed is going out at.
@@ -491,12 +496,15 @@ function syncNdiForm(cfg) {
   set('#ndi-fps', 'value', String(cfg.fps));
 
   const key = cfg.width + 'x' + cfg.height;
-  const preset = PRESETS.includes(key) ? key : 'custom';
-  set('#ndi-preset', 'value', preset);
+  // A size that is not one of the presets can only be a custom one.
+  if (!PRESETS.includes(key)) customMode = true;
+
+  set('#ndi-preset', 'value', customMode ? 'custom' : key);
   set('#ndi-width', 'value', cfg.width);
   set('#ndi-height', 'value', cfg.height);
-  $('#ndi-custom').hidden = preset !== 'custom';
+  $('#ndi-custom').hidden = !customMode;
 
+  ndiFormReady = true;
   updateNdiBadge();
   // The preview frames the feed, so it has to follow the feed's size.
   fitPreview();
@@ -572,6 +580,10 @@ function renderNdiStatus(status) {
 
 let ndiTimer = null;
 function saveNdi() {
+  // Every save posts the whole form, so saving before the form has been
+  // filled in from the server would write defaults over real settings -
+  // quietly switching the feed off, among other things.
+  if (!ndiFormReady) return;
   clearTimeout(ndiTimer);
   ndiTimer = setTimeout(async () => {
     try {
@@ -589,9 +601,20 @@ function saveNdi() {
 
 $('#ndi-fields').addEventListener('change', (event) => {
   if (event.target.id === 'ndi-preset') {
-    $('#ndi-custom').hidden = event.target.value !== 'custom';
+    customMode = event.target.value === 'custom';
+    $('#ndi-custom').hidden = !customMode;
+
+    if (customMode) {
+      // Picking Custom only reveals the boxes - no size has been chosen yet.
+      // Saving now would store the size already in force and, if that matched
+      // a preset, bounce the dropdown back. Wait for a width to be typed.
+      const width = $('#ndi-width');
+      width.focus();
+      width.select();
+      return;
+    }
   }
-  if (event.target.closest('#ndi-fields')) saveNdi();
+  saveNdi();
 });
 $('#ndi-name').addEventListener('input', saveNdi);
 
