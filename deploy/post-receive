@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Deploys Text Display whenever main is pushed to this repo.
+# Only main deploys; other branches are accepted and ignored.
+set -euo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+BARE="$HOME/text-display.git"
+WORK="$HOME/text-display"
+LOG="$HOME/text-display-deploy.log"
+BRANCH=main
+
+while read -r _old new ref; do
+  if [ "$ref" != "refs/heads/$BRANCH" ]; then
+    echo "  ignoring $ref (only $BRANCH deploys)"
+    continue
+  fi
+
+  # The hook runs inside the bare repo; these would confuse the work tree.
+  unset GIT_DIR GIT_WORK_TREE GIT_QUARANTINE_PATH GIT_INDEX_FILE
+
+  if [ ! -d "$WORK/.git" ]; then
+    echo "  first deploy - cloning working copy"
+    git clone --quiet --branch "$BRANCH" "$BARE" "$WORK"
+  fi
+
+  cd "$WORK"
+  echo "=== $(date -Is) deploying ${new:0:7} ===" >> "$LOG"
+  # deploy.sh pulls from this bare repo, rebuilds, restarts and then asks the
+  # running app which commit it is before calling it a success.
+  if ./deploy.sh 2>&1 | tee -a "$LOG"; then
+    echo "  deploy finished"
+  else
+    echo "  DEPLOY FAILED - see $LOG"
+    exit 1
+  fi
+done

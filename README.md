@@ -99,3 +99,37 @@ npm run dist      # build the Windows installer
 The display page is the single source of truth for what goes to air. The admin
 preview is that same page in an iframe, and the NDI feed is that same page
 rendered offscreen, so all three agree by construction.
+
+## Deployment
+
+Production runs in Docker on the sandbox server at **10.101.6.12:4321**.
+
+Deployment is push-to-deploy: the server hosts a bare repo whose
+`post-receive` hook checks out `main`, rebuilds the image and restarts the
+container, then asks the running app which commit it reports before calling
+the deploy a success. A copy of that hook lives in `deploy/post-receive`.
+
+```sh
+git push            # goes to GitHub AND deploys to the server
+git push origin     # same thing
+git push production # deploy only, skipping GitHub
+```
+
+`git push` has two push URLs configured, so one command sends the code to
+GitHub for history and to the server to go live. Only `main` deploys; other
+branches are accepted and ignored.
+
+To check what is live, look at the version in the admin header - it reads
+`v0.2.0 · 7f671d1` and the tooltip gives the branch, commit time and image
+build time. A dev instance running from a working copy is outlined and shows
+a trailing `+` when there are uncommitted changes.
+
+To deploy by hand, or to see why one failed:
+
+```sh
+ssh sandbox@10.101.6.12 '~/text-display/deploy.sh'
+ssh sandbox@10.101.6.12 'tail -40 ~/text-display-deploy.log'
+```
+
+Data lives on the `text-display_text-display-data` Docker volume, so rebuilds
+and redeploys never touch the message history or display settings.
