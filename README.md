@@ -1,0 +1,101 @@
+# Text Display
+
+Puts congregation messages on screen during a service. Someone pastes messages
+in on a submission page, a moderator clears them, and the cleared ones are
+rendered on a full-bleed display page suitable for a browser source, a second
+monitor, or an NDI feed.
+
+## The two halves
+
+The app is deliberately split, because the two jobs want different machines:
+
+| Part | Where it runs | What it does |
+| --- | --- | --- |
+| **Server** | Linux, in Docker | Hosts the submit / admin / parked / display pages and owns the data |
+| **NDI sender** | Windows, in the booth | Renders the display page and puts it on the video network |
+
+The server is plain Node with **no runtime dependencies**, so the container is
+small and needs no native builds. NDI wants a GPU and a real video network, so
+it stays on the Windows machine where NDI Tools already lives.
+
+Running everything on one Windows machine also works - just launch the app
+without `TEXT_DISPLAY_SERVER` and it hosts the server itself.
+
+## Running the server
+
+```sh
+docker compose up -d
+```
+
+Then open `http://<server>:4321/submit`.
+
+Configuration is by environment variable:
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `PORT` | `4321` | Port to listen on |
+| `TEXT_DISPLAY_DATA` | `/data` | Where messages and settings are written |
+| `TEXT_DISPLAY_ADMIN_LOCALHOST_ONLY` | `0` in the image | See below |
+
+Data lives on the `text-display-data` volume, so rebuilding the image never
+takes the message history or display settings with it.
+
+### A note on access
+
+The admin pages have no login. Outside Docker the app defaults to refusing
+admin requests from other machines, but behind a bridge network every request
+arrives from the gateway rather than loopback, so that guard would lock
+everyone out - the image therefore turns it off. **Anyone who can reach port
+4321 can put text on the screen**, so keep it on a staff network rather than
+exposing it.
+
+## Running the NDI sender
+
+On the Windows machine in the booth, install the app and point it at the
+server:
+
+```
+set TEXT_DISPLAY_SERVER=http://textdisplay.lan:4321
+"Text Display.exe"
+```
+
+With that variable set the app starts no server of its own. It opens the
+hosted display page offscreen and sends it as NDI.
+
+Requirements:
+
+- **The NDI runtime**, which comes with [NDI Tools](https://ndi.video/tools/).
+  It is not shipped with this app - it belongs to Vizrt and is not ours to
+  redistribute. The app finds it through the `NDI_RUNTIME_DIR_V*` variables the
+  NDI installer sets, or you can point at it with `TEXT_DISPLAY_NDI_LIB`.
+- **A Windows Firewall allowance** for the app, or NDI discovery is blocked and
+  nothing on the network will see the feed.
+
+### Feed settings
+
+Set from **NDI output** in the admin panel, from any machine - the settings
+live on the server and are pushed to the sender, which reconfigures itself
+without a restart:
+
+- **Send the feed** - on/off
+- **Feed name** - receivers see `MACHINE (name)`
+- **Resolution** - presets or custom
+- **Frame rate**
+- **Alpha channel** - needs the display background set to **transparent**
+  under Background, or the feed keys to a solid colour
+
+The panel shows what the sender actually reports: whether it is on air, how
+many receivers are connected, and the resolution genuinely going out, which is
+not always the one requested.
+
+## Development
+
+```sh
+npm run serve     # the server alone, no Electron
+npm start         # Electron: server + windows + NDI sender
+npm run dist      # build the Windows installer
+```
+
+The display page is the single source of truth for what goes to air. The admin
+preview is that same page in an iframe, and the NDI feed is that same page
+rendered offscreen, so all three agree by construction.

@@ -70,6 +70,8 @@ async function parseBody(req) {
   }
 }
 
+const str = (value, max) => (typeof value === 'string' ? value.slice(0, max) : null);
+
 function pick(payload, names) {
   for (const name of names) {
     const value = payload[name];
@@ -110,6 +112,11 @@ function createServer() {
   // What the audience can see right now, as reported by the display page.
   let onScreen = { ids: [], at: 0 };
 
+  // Reported by whichever machine is running the NDI sender. The server never
+  // produces a feed itself - it only holds the settings and relays them - so
+  // the web app stays happy in a container with no GPU and no NDI runtime.
+  let ndiStatus = { available: false, running: false, error: null, at: 0 };
+
   function snapshot() {
     return {
       version: pkg.version,
@@ -140,6 +147,12 @@ function createServer() {
   // reloads the full state.
   function broadcastOnScreen() {
     pushEvent('onscreen', onScreen);
+  }
+
+  // The sender listens for this and reconfigures itself, so changing the feed
+  // name or resolution in the admin panel takes effect without a restart.
+  function broadcastNdi() {
+    pushEvent('ndi', { config: config.get().ndi, status: ndiStatus });
   }
 
   const unsubscribe = store.onChange(broadcast);
@@ -187,6 +200,35 @@ function createServer() {
       return sendJson(res, 200, { ok: true });
     }
 
+    // The NDI sender runs on another machine, so like the display it reports
+    // in from outside the host-only gate. It reads its settings back in the
+    // reply, which is how a sender that started before the server catches up.
+    if (route === 'ndi/status' && method === 'POST') {
+      const payload = await parseBody(req);
+      ndiStatus = {
+        available: Boolean(payload.available),
+        running: Boolean(payload.running),
+        error: typeof payload.error === 'string' ? payload.error.slice(0, 400) : null,
+        sourceName: str(payload.sourceName, 120),
+        fullName: str(payload.fullName, 160),
+        connections: Number(payload.connections) || 0,
+        framesCaptured: Number(payload.framesCaptured) || 0,
+        framesSent: Number(payload.framesSent) || 0,
+        since: str(payload.since, 40),
+        library: str(payload.library, 400),
+        libraryVersion: str(payload.libraryVersion, 120),
+        actualSize: str(payload.actualSize, 20),
+        displayUrl: str(payload.displayUrl, 300),
+        at: Date.now(),
+      };
+      broadcastNdi();
+      return sendJson(res, 200, { ok: true, config: config.get().ndi });
+    }
+
+    if (route === 'ndi' && method === 'GET') {
+      return sendJson(res, 200, { config: config.get().ndi, status: ndiStatus });
+    }
+
     // Everything past this point drives the admin panel.
     if (config.get().adminLocalhostOnly && !isLocal(req)) {
       return sendJson(res, 403, { error: 'Admin API is restricted to this computer' });
@@ -199,11 +241,13 @@ function createServer() {
         parked: store.byState('parked'),
         archive: store.byState('archive'),
         config: { ...config.get(), urls: localAddresses(config.get().port) },
+        ndiStatus,
         options: {
           fonts: Object.keys(settings.FONT_STACKS),
           scrollTypes: settings.SCROLL_TYPES,
           backgroundModes: settings.BACKGROUND_MODES,
           textAligns: settings.TEXT_ALIGNS,
+          fpsChoices: config.FPS_CHOICES,
         },
       });
     }
@@ -257,6 +301,14 @@ function createServer() {
         broadcast();
         return sendJson(res, 200, reset);
       }
+    }
+
+    if (route === 'ndi' && (method === 'PATCH' || method === 'PUT')) {
+      const payload = await parseBody(req);
+      const updated = config.updateNdi(payload);
+      // Push straight to the sender rather than waiting for its next poll.
+      broadcastNdi();
+      return sendJson(res, 200, { config: updated, status: ndiStatus });
     }
 
     if (route === 'config' && (method === 'PATCH' || method === 'PUT')) {

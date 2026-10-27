@@ -46,6 +46,31 @@
     padding: 12px;
     display: grid; gap: 12px; align-content: start;
   }
+  /* The feed either is or is not on the network, and the operator needs to
+     know which without walking to the rack. */
+  .ndi-status {
+    border-top: 1px solid var(--line);
+    margin-top: 2px;
+    padding-top: 9px;
+    font-size: 12px;
+    color: var(--muted);
+    display: grid;
+    gap: 3px;
+  }
+  .ndi-status .lamp {
+    display: inline-flex; align-items: center; gap: 7px;
+    color: var(--ink); font-size: 13px;
+  }
+  .ndi-status .lamp::before {
+    content: ''; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--muted); flex: none;
+  }
+  .ndi-status.on .lamp::before { background: var(--ok); }
+  .ndi-status.warn .lamp::before { background: var(--warn); }
+  .ndi-status.bad .lamp::before { background: var(--danger); }
+  .ndi-status .detail { word-break: break-all; }
+  .ndi-status .bad-text { color: #ffbcbc; }
+
   #compose textarea {
     width: 100%; min-height: 62px; resize: vertical;
     background: #0d1224; border: 1px solid var(--line); border-radius: 5px; padding: 6px;
@@ -119,6 +144,52 @@
     </details>
 
     <div id="settings-groups"></div>
+
+    <details class="group" id="ndi-group">
+      <summary>NDI output</summary>
+      <div class="fields" id="ndi-fields">
+        <div class="field">
+          <label for="ndi-enabled">Send the feed</label>
+          <div class="control"><input type="checkbox" id="ndi-enabled"></div>
+        </div>
+        <div class="field">
+          <label for="ndi-name">Feed name</label>
+          <div class="control"><input type="text" id="ndi-name" maxlength="80"></div>
+        </div>
+        <div class="field">
+          <label for="ndi-preset">Resolution</label>
+          <div class="control">
+            <select id="ndi-preset">
+              <option value="1920x1080">1920 x 1080</option>
+              <option value="1280x720">1280 x 720</option>
+              <option value="3840x2160">3840 x 2160</option>
+              <option value="1080x1920">1080 x 1920 (portrait)</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+        </div>
+        <div class="field" id="ndi-custom" hidden>
+          <label>Width / height</label>
+          <div class="control">
+            <input type="number" id="ndi-width" min="160" max="3840" step="2">
+            <input type="number" id="ndi-height" min="90" max="2160" step="2">
+          </div>
+        </div>
+        <div class="field">
+          <label for="ndi-fps">Frame rate</label>
+          <div class="control"><select id="ndi-fps"></select></div>
+        </div>
+        <div class="field">
+          <label for="ndi-alpha">Alpha channel</label>
+          <div class="control"><input type="checkbox" id="ndi-alpha"></div>
+        </div>
+        <div class="note">
+          Alpha needs the display background set to <strong>transparent</strong>
+          under Background, or the feed keys to a solid colour.
+        </div>
+        <div id="ndi-status" class="ndi-status"></div>
+      </div>
+    </details>
 
     <details class="group">
       <summary>Connection &amp; security</summary>
@@ -350,6 +421,165 @@ async function compose(sendLive) {
 $('#compose-review').addEventListener('click', () => compose(false));
 $('#compose-live').addEventListener('click', () => compose(true));
 
+/* ---------- NDI output ---------- */
+
+const PRESETS = ['1920x1080', '1280x720', '3840x2160', '1080x1920'];
+let ndiConfig = null;
+let fpsBuilt = false;
+
+function ndiFromForm() {
+  const preset = $('#ndi-preset').value;
+  let width;
+  let height;
+  if (preset === 'custom') {
+    width = Number($('#ndi-width').value);
+    height = Number($('#ndi-height').value);
+  } else {
+    [width, height] = preset.split('x').map(Number);
+  }
+  return {
+    enabled: $('#ndi-enabled').checked,
+    name: $('#ndi-name').value.trim() || 'Text Display',
+    width,
+    height,
+    fps: Number($('#ndi-fps').value),
+    alpha: $('#ndi-alpha').checked,
+  };
+}
+
+function syncNdiForm(cfg) {
+  ndiConfig = cfg;
+
+  if (!fpsBuilt) {
+    const sel = $('#ndi-fps');
+    for (const n of (TD.options.fpsChoices || [15, 24, 25, 30, 50, 60])) {
+      const opt = document.createElement('option');
+      opt.value = n;
+      opt.textContent = n + ' fps';
+      sel.append(opt);
+    }
+    fpsBuilt = true;
+  }
+
+  const active = document.activeElement;
+  const set = (sel, prop, value) => {
+    const el = $(sel);
+    if (el !== active) el[prop] = value;
+  };
+
+  set('#ndi-enabled', 'checked', cfg.enabled);
+  set('#ndi-name', 'value', cfg.name);
+  set('#ndi-alpha', 'checked', cfg.alpha);
+  set('#ndi-fps', 'value', String(cfg.fps));
+
+  const key = cfg.width + 'x' + cfg.height;
+  const preset = PRESETS.includes(key) ? key : 'custom';
+  set('#ndi-preset', 'value', preset);
+  set('#ndi-width', 'value', cfg.width);
+  set('#ndi-height', 'value', cfg.height);
+  $('#ndi-custom').hidden = preset !== 'custom';
+}
+
+// A sender that has stopped reporting is not a sender that is working, so the
+// panel treats silence as "not running" rather than leaving a stale green.
+const NDI_STALE_MS = 20000;
+
+function renderNdiStatus(status) {
+  const host = $('#ndi-status');
+  host.textContent = '';
+  host.className = 'ndi-status';
+
+  const s = status || {};
+  const fresh = s.at && Date.now() - s.at < NDI_STALE_MS;
+
+  const lamp = document.createElement('div');
+  lamp.className = 'lamp';
+  const add = (text, cls) => {
+    const d = document.createElement('div');
+    d.className = 'detail' + (cls ? ' ' + cls : '');
+    d.textContent = text;
+    host.append(d);
+  };
+
+  if (!s.at) {
+    lamp.textContent = 'No sender has reported in';
+    host.append(lamp);
+    add('Run the app on the machine that should put the feed on the network.');
+    return;
+  }
+  if (!fresh) {
+    host.classList.add('bad');
+    lamp.textContent = 'Sender offline';
+    host.append(lamp);
+    add('Last heard from ' + new Date(s.at).toLocaleTimeString());
+    return;
+  }
+  if (!s.available) {
+    host.classList.add('bad');
+    lamp.textContent = 'NDI runtime not available';
+    host.append(lamp);
+    if (s.error) add(s.error, 'bad-text');
+    return;
+  }
+  if (s.error) {
+    host.classList.add('bad');
+    lamp.textContent = 'Sender error';
+    host.append(lamp);
+    add(s.error, 'bad-text');
+    return;
+  }
+  if (!s.running) {
+    host.classList.add('warn');
+    lamp.textContent = 'Ready, not sending';
+    host.append(lamp);
+    add('Tick "Send the feed" to put it on the network.');
+    if (s.libraryVersion) add(s.libraryVersion);
+    return;
+  }
+
+  host.classList.add('on');
+  lamp.textContent = 'On air';
+  host.append(lamp);
+  add('Source: ' + (s.fullName || s.sourceName));
+  add(s.connections === 1 ? '1 receiver connected' : s.connections + ' receivers connected');
+  add(s.framesSent.toLocaleString() + ' frames sent');
+  if (s.libraryVersion) add(s.libraryVersion);
+}
+
+let ndiTimer = null;
+function saveNdi() {
+  clearTimeout(ndiTimer);
+  ndiTimer = setTimeout(async () => {
+    try {
+      const result = await TD.api('ndi', {
+        method: 'PATCH',
+        body: JSON.stringify(ndiFromForm()),
+      });
+      syncNdiForm(result.config);
+      TD.toast('NDI settings saved');
+    } catch (err) {
+      TD.toast(err.message, true);
+    }
+  }, 150);
+}
+
+$('#ndi-fields').addEventListener('change', (event) => {
+  if (event.target.id === 'ndi-preset') {
+    $('#ndi-custom').hidden = event.target.value !== 'custom';
+  }
+  if (event.target.closest('#ndi-fields')) saveNdi();
+});
+$('#ndi-name').addEventListener('input', saveNdi);
+
+// The sender pushes its own event, so the lamp moves without a state reload.
+TD.onNdi = (data) => {
+  if (data.config) syncNdiForm(data.config);
+  renderNdiStatus(data.status);
+};
+
+// Keeps "sender offline" honest even when nothing is arriving.
+setInterval(() => renderNdiStatus(TD.state && TD.state.ndiStatus), 5000);
+
 /* ---------- config ---------- */
 
 function syncConfig() {
@@ -420,10 +650,12 @@ fitPreview();
 
 /* ---------- wire up ---------- */
 
-TD.onState(() => {
+TD.onState((state) => {
   if (!groupsBuilt) buildSettingsGroups();
   syncSettingsInputs();
   syncConfig();
+  if (state.config && state.config.ndi) syncNdiForm(state.config.ndi);
+  renderNdiStatus(state.ndiStatus);
 });
 
 TD.start();

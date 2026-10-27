@@ -8,12 +8,27 @@ const { app, BrowserWindow, Menu, shell, clipboard, dialog, screen } = require('
 const { listen } = require('./src/server');
 const config = require('./src/config');
 const settings = require('./src/settings');
+const { startNdiClient } = require('./src/ndi-client');
 const pkg = require('./package.json');
+
+// Point this at the server to run as a booth sender beside a hosted app:
+//   TEXT_DISPLAY_SERVER=http://textdisplay.lan:4321
+// With it set, no local server starts - this process renders the hosted
+// display page and puts it on the network as NDI.
+const REMOTE_SERVER = (process.env.TEXT_DISPLAY_SERVER || '').trim().replace(/\/+$/, '');
+
+// Windows sizes windows in logical pixels, so on a machine running at 150%
+// an offscreen window asked for 1280x720 rasterises to 1920x1080 and the NDI
+// feed comes out at the wrong resolution. Broadcast output has to be exact,
+// so this app opts out of display scaling entirely. The side effect is that
+// the admin window renders at 100% rather than the desktop's scale.
+app.commandLine.appendSwitch('force-device-scale-factor', '1');
 
 let server = null;
 let baseUrl = '';
 let adminWindow = null;
 let displayWindow = null;
+let ndi = null;
 
 // Only one instance may own the port; a second launch focuses the first.
 if (!app.requestSingleInstanceLock()) {
@@ -201,14 +216,27 @@ function buildMenu() {
 }
 
 app.whenReady().then(async () => {
-  try {
-    server = await listen(config.get().port);
-  } catch (err) {
-    dialog.showErrorBox('Text Display', `Could not start the server:\n\n${err.message}`);
-    app.quit();
-    return;
+  if (REMOTE_SERVER) {
+    // Booth sender mode: the app is hosted elsewhere, this machine only puts
+    // the display page on the video network.
+    baseUrl = REMOTE_SERVER;
+  } else {
+    try {
+      server = await listen(config.get().port);
+    } catch (err) {
+      dialog.showErrorBox('Text Display', `Could not start the server:\n\n${err.message}`);
+      app.quit();
+      return;
+    }
+    baseUrl = `http://localhost:${server.address().port}`;
   }
-  baseUrl = `http://localhost:${server.address().port}`;
+
+  ndi = startNdiClient({
+    serverUrl: baseUrl,
+    displayUrl: `${baseUrl}/display`,
+    log: (message) => console.log(`[ndi] ${message}`),
+  });
+
   buildMenu();
   createAdminWindow();
   screen.on('display-added', buildMenu);
@@ -216,6 +244,12 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  if (server) server.close();
   app.quit();
+});
+
+// Tearing the sender down properly removes the source from the network
+// rather than leaving receivers staring at a dead feed.
+app.on('before-quit', () => {
+  if (ndi) ndi.stop();
+  if (server) server.close();
 });

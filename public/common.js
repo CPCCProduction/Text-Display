@@ -448,6 +448,16 @@ function connect() {
   const source = new EventSource('/api/stream');
   source.onmessage = () => scheduleLoad();
 
+  // The NDI sender reports several times a minute; like the marker it gets
+  // its own event so the panel updates without reloading everything.
+  source.addEventListener('ndi', (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (TD.state) TD.state.ndiStatus = data.status;
+      if (typeof TD.onNdi === 'function') TD.onNdi(data);
+    } catch { /* the next report carries the same information */ }
+  });
+
   // Its own event, so moving the marker never costs a full state reload.
   source.addEventListener('onscreen', (event) => {
     try {

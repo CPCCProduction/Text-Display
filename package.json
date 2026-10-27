@@ -14,7 +14,9 @@
     "version:minor": "npm version minor -m \"Release v%s\"",
     "dist": "electron-builder"
   },
-  "dependencies": {},
+  "dependencies": {
+    "koffi": "^3.3.4"
+  },
   "devDependencies": {
     "electron": "^38.1.0",
     "electron-builder": "^25.1.8"
@@ -29,7 +31,13 @@
       "main.js",
       "src/**/*",
       "public/**/*",
-      "package.json"
+      "package.json",
+      "node_modules/koffi/**/*",
+      "node_modules/@koromix/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/koffi/**/*",
+      "node_modules/@koromix/**/*"
     ],
     "win": {
       "target": [

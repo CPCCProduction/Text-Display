@@ -1,0 +1,30 @@
+services:
+  text-display:
+    build: .
+    image: text-display:latest
+    container_name: text-display
+    restart: unless-stopped
+    ports:
+      - "4321:4321"
+    volumes:
+      # Messages, display settings and the NDI configuration.
+      - text-display-data:/data
+    environment:
+      TEXT_DISPLAY_DATA: /data
+      PORT: "4321"
+      # See the Dockerfile: the host-only admin guard cannot work behind a
+      # bridge network. Anyone who can reach this port can post to the screen,
+      # so keep it on a staff network rather than exposing it.
+      TEXT_DISPLAY_ADMIN_LOCALHOST_ONLY: "0"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://127.0.0.1:4321/api/state',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  text-display-data:

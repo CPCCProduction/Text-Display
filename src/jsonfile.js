@@ -6,7 +6,10 @@ function readJson(file, fallback) {
   try {
     const raw = fs.readFileSync(file, 'utf8');
     if (!raw.trim()) return fallback;
-    return JSON.parse(raw);
+    // Notepad and PowerShell's Set-Content both write a UTF-8 BOM, and
+    // JSON.parse rejects it. Without this, hand-editing a settings file
+    // quarantines it and silently resets everything to defaults.
+    return JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
   } catch (err) {
     if (err.code === 'ENOENT') return fallback;
     // A corrupt file must not take the app down mid-service: keep a copy of

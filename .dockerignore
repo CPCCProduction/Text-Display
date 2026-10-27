@@ -1,0 +1,12 @@
+node_modules/
+dist/
+out/
+data/
+.git/
+.gitignore
+.gitattributes
+*.log
+main.js
+Dockerfile
+docker-compose.yml
+README.md

@@ -165,7 +165,14 @@ const edges = {
 
 // Preview mode lets the admin panel embed this page without the offline badge
 // flashing while the iframe reconnects.
-const PREVIEW = new URLSearchParams(location.search).get('preview') === '1';
+const PARAMS = new URLSearchParams(location.search);
+const PREVIEW = PARAMS.get('preview') === '1';
+// The NDI sender renders this page straight to air, so none of the operator
+// chrome may appear - a "waiting for messages" placeholder would be broadcast.
+// Unlike the preview it IS the real output, so it still reports what is on
+// screen to the live board.
+const NDI = PARAMS.get('ndi') === '1';
+const CLEAN = PREVIEW || NDI;
 
 let settings = null;
 let messages = [];
@@ -579,7 +586,7 @@ function connect() {
   // The stream is the only path for updates, so a dropped connection has to
   // reconnect on its own - nobody is watching this machine mid-service.
   source.onerror = () => {
-    if (!PREVIEW) document.body.classList.add('offline');
+    if (!CLEAN) document.body.classList.add('offline');
     source.close();
     retry = setTimeout(connect, 2000);
   };
