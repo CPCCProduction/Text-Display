@@ -160,8 +160,22 @@ class NdiOutput {
       if (!image) return;
       const size = image.getSize();
       if (!size.width || !size.height) return;
-      this.latest = { data: image.getBitmap(), width: size.width, height: size.height };
+
+      // Converted here, once per painted frame, rather than on every send.
+      // getBitmap() already returns a fresh buffer, so it can be converted in
+      // place with no copy. Doing it per send meant a still page redid the
+      // same two-million-pixel pass thirty times a second and allocated a
+      // fresh eight-megabyte buffer each time, and that garbage alone was
+      // enough to make the machine hitch.
+      const data = image.getBitmap();
+      if (alpha) unpremultiply(data);
+
+      this.latest = { data, width: size.width, height: size.height, alpha };
       this.framesCaptured += 1;
+
+      // Straight out as it was painted, so NDI frames and rendered frames
+      // stay one to one.
+      this.sendFrame();
     });
 
     this.window.webContents.on('did-fail-load', (_e, code, description) => {
@@ -229,48 +243,54 @@ class NdiOutput {
   // NDI wants a steady cadence. Chromium only paints when something changes,
   // so a still page would otherwise stop the feed dead; the last frame is
   // resent instead.
+  // One NDI frame per painted frame. Pacing sends on a timer of its own
+  // instead meant the timer and the compositor drifted against each other,
+  // so a frame was occasionally sent twice or skipped - which reads as a
+  // stutter in otherwise smooth movement.
+  sendFrame() {
+    if (!this.sender || !this.latest || !this.config) return;
+    const frame = this.latest;
+    const fps = clamp(this.config.fps, MIN_FPS, MAX_FPS);
+
+    try {
+      this.sender.send({
+        xres: frame.width,
+        yres: frame.height,
+        FourCC: frame.alpha ? this.lib.FOURCC_BGRA : this.lib.FOURCC_BGRX,
+        frame_rate_N: Math.round(fps * 1000),
+        frame_rate_D: 1000,
+        picture_aspect_ratio: frame.width / frame.height,
+        frame_format_type: this.lib.FORMAT_PROGRESSIVE,
+        timecode: 0n,
+        p_data: frame.data,
+        line_stride_in_bytes: frame.width * 4,
+        p_metadata: null,
+        timestamp: 0n,
+      });
+      this.framesSent += 1;
+      this.lastSentAt = Date.now();
+    } catch (err) {
+      this.lastError = `Send failed: ${err.message}`;
+      this.stop(true);
+      this.report();
+    }
+  }
+
+  // Chromium only paints when something changes, so a still page would stop
+  // the feed dead. This resends the last frame, but only once nothing has
+  // gone out for a frame and a half - during movement every frame is sent by
+  // sendFrame() and this never fires.
   startPump() {
     this.stopPump();
-    const { fps, alpha, width, height } = this.config;
-    const interval = Math.max(4, Math.round(1000 / clamp(fps, MIN_FPS, MAX_FPS)));
+    const fps = clamp(this.config.fps, MIN_FPS, MAX_FPS);
+    const idle = Math.max(8, Math.round(1500 / fps));
 
     this.pump = setInterval(() => {
       if (!this.sender || !this.latest) return;
-      const frame = this.latest;
-
-      let data = frame.data;
-      if (alpha) {
-        // getBitmap() hands back a fresh buffer each paint, but the same one
-        // is resent while the page is still, so convert a copy.
-        data = Buffer.from(frame.data);
-        unpremultiply(data);
-      }
-
-      try {
-        this.sender.send({
-          xres: frame.width,
-          yres: frame.height,
-          FourCC: alpha ? this.lib.FOURCC_BGRA : this.lib.FOURCC_BGRX,
-          frame_rate_N: Math.round(clamp(fps, MIN_FPS, MAX_FPS) * 1000),
-          frame_rate_D: 1000,
-          picture_aspect_ratio: frame.width / frame.height,
-          frame_format_type: this.lib.FORMAT_PROGRESSIVE,
-          timecode: 0n,
-          p_data: data,
-          line_stride_in_bytes: frame.width * 4,
-          p_metadata: null,
-          timestamp: 0n,
-        });
-        this.framesSent += 1;
-      } catch (err) {
-        this.lastError = `Send failed: ${err.message}`;
-        this.stop(true);
-        this.report();
-      }
-    }, interval);
+      if (Date.now() - (this.lastSentAt || 0) < idle) return;
+      this.sendFrame();
+    }, idle);
     if (this.pump.unref) this.pump.unref();
-
-    this.sizeHint = { width, height };
   }
 
   stopPump() {

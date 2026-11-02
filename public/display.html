@@ -319,29 +319,22 @@ function visibleIds() {
     return [...marked];
   }
 
-  const vertical = track.classList.contains('vertical');
-  const frame = viewport.getBoundingClientRect();
-
-  // A crawl holds two copies of every message, so one copy can be leaving at
-  // the top while the other enters at the bottom. Keep the best showing of
-  // the two, keyed by id, in DOM order.
+  // Worked out from the geometry measured when the track was built, plus the
+  // current offset. Reading getBoundingClientRect() here instead would force
+  // a layout immediately after the transform was written - a read straight
+  // after a write - and the resulting hitch is visible as a stutter in the
+  // scroll several times a second.
   const shown = new Map();
-  for (const el of track.children) {
-    const r = el.getBoundingClientRect();
-    const overlap = vertical
-      ? Math.min(r.bottom, frame.bottom) - Math.max(r.top, frame.top)
-      : Math.min(r.right, frame.right) - Math.max(r.left, frame.left);
+  for (const g of geometry) {
+    const start = g.start + offset;
+    const overlap = Math.min(start + g.size, crawlSpan) - Math.max(start, 0);
     if (overlap <= 0) continue;
 
     // Measured against the message or the screen, whichever is smaller: a
     // message taller than the screen can never show a third of itself, but
     // it is plainly on screen once it fills a third of the frame.
-    const own = vertical ? r.height : r.width;
-    const view = vertical ? frame.height : frame.width;
-    const ratio = overlap / Math.max(1, Math.min(own, view));
-
-    const id = el.dataset.mid;
-    shown.set(id, Math.max(shown.get(id) || 0, ratio));
+    const ratio = overlap / Math.max(1, Math.min(g.size, crawlSpan));
+    shown.set(g.mid, Math.max(shown.get(g.mid) || 0, ratio));
   }
 
   const next = new Set();
@@ -480,6 +473,13 @@ function startStepped(showingId = null) {
 let frame = null;
 let offset = 0;
 let lastTime = 0;
+// Where every message sits along the scroll axis, measured once when the
+// track is built so the animation frame never has to read layout.
+let geometry = [];
+let crawlSpan = 0;
+// Reporting what is on screen runs on its own timer rather than inside the
+// animation frame, so it cannot stall a frame.
+let reportTimer = null;
 // Set when the window resizes, so the crawl re-measures on its next frame
 // instead of reading layout every single frame.
 let needsMeasure = false;
@@ -487,6 +487,8 @@ let needsMeasure = false;
 function stopCrawl() {
   if (frame) cancelAnimationFrame(frame);
   frame = null;
+  clearInterval(reportTimer);
+  reportTimer = null;
 }
 
 function stopAnimation() {
@@ -499,14 +501,24 @@ function startCrawl(keepGoing = false) {
   const vertical = track.classList.contains('vertical');
   const gap = settings.scroll.spacing;
 
-  // One "run" is the original set of messages plus the gap that follows the
-  // last one; wrapping at exactly that distance makes the seam invisible.
-  const runLength = () => [...track.children]
-    .filter((el) => !el.dataset.clone)
-    .reduce((sum, el) => sum + (vertical ? el.offsetHeight : el.offsetWidth) + gap, 0);
+  // Everything the loop needs is measured here and nowhere else. One "run" is
+  // the original set of messages plus the gap that follows the last one;
+  // wrapping at exactly that distance makes the seam invisible.
+  const measure = () => {
+    const kids = [...track.children];
+    crawlSpan = vertical ? viewport.clientHeight : viewport.clientWidth;
+    geometry = kids.map((el) => ({
+      mid: el.dataset.mid,
+      start: vertical ? el.offsetTop : el.offsetLeft,
+      size: vertical ? el.offsetHeight : el.offsetWidth,
+    }));
+    return kids
+      .filter((el) => !el.dataset.clone)
+      .reduce((sum, el) => sum + (vertical ? el.offsetHeight : el.offsetWidth) + gap, 0);
+  };
 
-  let run = runLength();
-  let span = vertical ? viewport.clientHeight : viewport.clientWidth;
+  let run = measure();
+  let span = crawlSpan;
   const forward = mode === 'crawl-down' || mode === 'ticker-right';
 
   // Start off-screen so the first message rolls in rather than popping in.
@@ -516,9 +528,6 @@ function startCrawl(keepGoing = false) {
   if (!keepGoing) offset = forward ? -run : span;
   lastTime = 0;
   needsMeasure = false;
-  // Measuring every child every frame would force a layout 60 times a
-  // second, so the on-screen check runs a few times a second instead.
-  let lastCheck = 0;
 
   const step = (time) => {
     if (!lastTime) lastTime = time;
@@ -527,12 +536,16 @@ function startCrawl(keepGoing = false) {
     const dt = Math.min(0.25, (time - lastTime) / 1000);
     lastTime = time;
 
+    // Only ever on a resize, never as part of the normal loop.
     if (needsMeasure) {
       needsMeasure = false;
-      run = runLength();
-      span = vertical ? viewport.clientHeight : viewport.clientWidth;
+      run = measure();
+      span = crawlSpan;
     }
-    if (!run) run = runLength();
+    if (!run) {
+      run = measure();
+      span = crawlSpan;
+    }
 
     offset += (forward ? 1 : -1) * settings.scroll.speed * dt;
 
@@ -541,19 +554,19 @@ function startCrawl(keepGoing = false) {
       if (!forward && offset <= -run) offset += run;
     }
 
-    const px = Math.round(offset * 100) / 100;
+    // Left as a fractional value on purpose: rounding to whole pixels makes
+    // slow movement advance in visible steps instead of gliding.
     track.style.transform = vertical
-      ? 'translateY(' + px + 'px)'
-      : 'translate(' + px + 'px, -50%)';
-
-    if (time - lastCheck > 250) {
-      lastCheck = time;
-      report();
-    }
+      ? 'translate3d(0,' + offset + 'px,0)'
+      : 'translate3d(' + offset + 'px,-50%,0)';
 
     frame = requestAnimationFrame(step);
   };
   frame = requestAnimationFrame(step);
+
+  // Off the animation frame entirely.
+  clearInterval(reportTimer);
+  reportTimer = setInterval(report, 250);
 }
 
 /* ---------- live data ---------- */
