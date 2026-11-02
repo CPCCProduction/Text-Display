@@ -14,41 +14,18 @@ const FOURCC_BGRA = 0x41524742;   // 'BGRA', little-endian
 const FOURCC_BGRX = 0x58524742;   // 'BGRX' - same bytes, alpha ignored
 const FORMAT_PROGRESSIVE = 1;
 
-// Where the runtime lives, in the order worth trying. The NDI installers set
-// NDI_RUNTIME_DIR_V<n>, so an explicit install is found without guessing.
-function candidatePaths() {
-  const out = [];
-  const explicit = process.env.TEXT_DISPLAY_NDI_LIB;
-  if (explicit) out.push(explicit);
+// The runtime is versioned, and the version is in the filename - libndi.4.dylib,
+// libndi.so.6 and so on - so the directories are searched rather than a list of
+// exact names guessed at. Guessing names is how this came to report "not found"
+// on a Mac that had NDI installed.
+const LIB_PATTERN = {
+  win32: /^Processing\.NDI\.Lib\.x64\.dll$/i,
+  darwin: /^libndi(\.\d+)*\.dylib$|^libndi\.dylib(\.\d+)*$/i,
+  linux: /^libndi\.so(\.\d+)*$/i,
+};
 
-  for (const v of ['V6', 'V5', 'V4']) {
-    const dir = process.env[`NDI_RUNTIME_DIR_${v}`];
-    if (dir) out.push(path.join(dir, libraryName()));
-  }
-
-  if (process.platform === 'win32') {
-    const base = process.env['ProgramFiles'] || 'C:\\Program Files';
-    for (const v of ['NDI 6 Tools', 'NDI 5 Tools', 'NDI 6 Runtime', 'NDI 5 Runtime']) {
-      out.push(path.join(base, 'NDI', v, 'Runtime', libraryName()));
-    }
-  } else if (process.platform === 'darwin') {
-    // NDI Tools for Mac drops the runtime in /usr/local/lib; the SDK and the
-    // Apple-silicon installers use their own folders. Homebrew's prefix on
-    // Apple silicon is /opt/homebrew.
-    out.push('/usr/local/lib/libndi.dylib');
-    out.push('/usr/local/lib/libndi.4.dylib');
-    out.push('/opt/homebrew/lib/libndi.dylib');
-    out.push('/Library/NDI SDK for Apple/lib/macOS/libndi.dylib');
-    out.push('/Library/Application Support/NewTek/NDI/libndi.dylib');
-  } else {
-    // Linux, including inside a container where the runtime is mounted in.
-    for (const dir of ['/opt/ndi/lib', '/usr/local/lib', '/usr/lib', '/usr/lib/x86_64-linux-gnu']) {
-      for (const name of ['libndi.so.6', 'libndi.so.5', 'libndi.so']) {
-        out.push(path.join(dir, name));
-      }
-    }
-  }
-  return out;
+function libraryPattern() {
+  return LIB_PATTERN[process.platform] || LIB_PATTERN.linux;
 }
 
 function libraryName() {
@@ -57,13 +34,80 @@ function libraryName() {
   return 'libndi.so.6';
 }
 
+// Directories worth looking in, most specific first. The NDI installers set
+// NDI_RUNTIME_DIR_V<n>, so an explicit install is found without searching.
+function searchDirs() {
+  const out = [];
+  for (const v of ['V6', 'V5', 'V4', 'V3', 'V2']) {
+    const dir = process.env[`NDI_RUNTIME_DIR_${v}`];
+    if (dir) out.push(dir);
+  }
+
+  if (process.platform === 'win32') {
+    const base = process.env['ProgramFiles'] || 'C:\\Program Files';
+    for (const v of ['NDI 6 Tools', 'NDI 5 Tools', 'NDI 6 Runtime', 'NDI 5 Runtime']) {
+      out.push(path.join(base, 'NDI', v, 'Runtime'));
+    }
+  } else if (process.platform === 'darwin') {
+    out.push('/usr/local/lib');
+    out.push('/opt/homebrew/lib');
+    // Both of these are directories the NDI installers and the OBS NDI
+    // plugin's own uninstall instructions name on macOS. The library can sit
+    // a couple of levels down, so these are walked rather than listed.
+    out.push('/Library/Application Support/NewTek/NDI');
+    out.push('/Library/NDI SDK for Apple/lib');
+    out.push('/Library/NDI');
+  } else {
+    out.push('/opt/ndi/lib', '/usr/local/lib', '/usr/lib', '/usr/lib/x86_64-linux-gnu');
+  }
+  return out;
+}
+
+// Shallow walk: the file is usually right there, occasionally one or two
+// folders down (lib/macOS, for instance). Deeper than that is someone's
+// bespoke layout, and TEXT_DISPLAY_NDI_LIB exists for those.
+function scan(dir, pattern, depth, found) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (depth > 0) scan(full, pattern, depth - 1, found);
+    } else if (pattern.test(entry.name)) {
+      found.push(full);
+    }
+  }
+}
+
 function findLibrary() {
-  for (const file of candidatePaths()) {
+  // An explicit override wins outright, and is not second-guessed.
+  const explicit = process.env.TEXT_DISPLAY_NDI_LIB;
+  if (explicit) {
     try {
-      if (fs.existsSync(file)) return file;
-    } catch { /* unreadable path, try the next */ }
+      if (fs.existsSync(explicit)) return explicit;
+    } catch { /* fall through to searching */ }
+  }
+
+  const pattern = libraryPattern();
+  for (const dir of searchDirs()) {
+    const found = [];
+    scan(dir, pattern, 2, found);
+    if (!found.length) continue;
+    // Prefer the highest version when a machine has several side by side.
+    found.sort((a, b) => path.basename(b).localeCompare(path.basename(a), undefined, { numeric: true }));
+    return found[0];
   }
   return null;
+}
+
+// Everything that was looked at, for an error message that tells the operator
+// where to put the library rather than just that it is missing.
+function searchedPaths() {
+  return searchDirs();
 }
 
 let cached = null;
@@ -77,7 +121,10 @@ function load() {
   if (!file) {
     cached = {
       ok: false,
-      error: 'The NDI runtime was not found. Install NDI Tools, or set TEXT_DISPLAY_NDI_LIB to the library.',
+      error: 'The NDI runtime was not found. Install NDI Tools, or set '
+        + 'TEXT_DISPLAY_NDI_LIB to the library. Looked in: '
+        + searchedPaths().join(', '),
+      searched: searchedPaths(),
     };
     return cached;
   }
@@ -190,4 +237,4 @@ function build(koffi, file) {
   };
 }
 
-module.exports = { load, findLibrary, FOURCC_BGRA, FOURCC_BGRX, FORMAT_PROGRESSIVE };
+module.exports = { load, findLibrary, searchedPaths, FOURCC_BGRA, FOURCC_BGRX, FORMAT_PROGRESSIVE };
