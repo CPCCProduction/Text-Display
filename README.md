@@ -156,10 +156,13 @@ Things specific to macOS:
   Apple-silicon Mac (or the reverse) ships without the FFI the NDI binding
   needs and the feed will not start. Build on the architecture you intend to
   run, or run `npm install` again on the other one.
-- **The NDI runtime is still required** and is not shipped with the app. NDI
-  Tools for Mac installs it; the app looks in `/usr/local/lib`,
-  `/opt/homebrew/lib` and the SDK folders, or set `TEXT_DISPLAY_NDI_LIB` to
-  the dylib.
+- **The NDI runtime is still required** and is not shipped with the app.
+  Unlike Windows, NDI Tools for Mac installs no shared runtime at all - each
+  of its apps carries a copy inside its own bundle. The app therefore looks
+  for a system-wide install first (`/usr/local/lib`, `/opt/homebrew/lib`, the
+  SDK folders) and then inside every app in `/Applications`, so a Mac with
+  NDI Tools or Resolume already on it works with nothing extra to install.
+  `TEXT_DISPLAY_NDI_LIB` overrides the search.
 - **The app is unsigned**, so Gatekeeper will refuse it on first launch.
   Right-click the app and choose Open, or clear the quarantine flag:
   `xattr -dr com.apple.quarantine "/Applications/Text Display.app"`.

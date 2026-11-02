@@ -49,14 +49,28 @@ function searchDirs() {
       out.push(path.join(base, 'NDI', v, 'Runtime'));
     }
   } else if (process.platform === 'darwin') {
+    // A proper system-wide install, if the Redistributable or the SDK put one
+    // there. Preferred, because it does not depend on another app.
     out.push('/usr/local/lib');
     out.push('/opt/homebrew/lib');
-    // Both of these are directories the NDI installers and the OBS NDI
-    // plugin's own uninstall instructions name on macOS. The library can sit
-    // a couple of levels down, so these are walked rather than listed.
     out.push('/Library/Application Support/NewTek/NDI');
     out.push('/Library/NDI SDK for Apple/lib');
     out.push('/Library/NDI');
+
+    // NDI Tools for Mac installs no shared runtime at all: every one of its
+    // apps carries its own copy inside its bundle, and other NDI-aware apps
+    // do the same. Borrowing one of those is what makes a Mac with NDI Tools
+    // already installed work without a separate download. Listed last, so a
+    // real install always wins.
+    try {
+      for (const entry of fs.readdirSync('/Applications', { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const app = path.join('/Applications', entry.name);
+        out.push(path.join(app, 'Contents', 'Frameworks'));
+        // Some ship it loose in the application folder rather than a bundle.
+        out.push(app);
+      }
+    } catch { /* no /Applications, or not readable */ }
   } else {
     out.push('/opt/ndi/lib', '/usr/local/lib', '/usr/lib', '/usr/lib/x86_64-linux-gnu');
   }
@@ -83,6 +97,15 @@ function scan(dir, pattern, depth, found) {
   }
 }
 
+// Several of the NDI Tools apps carry only the Advanced SDK build, which
+// exports the same entry points. Taken only when no plain library is found
+// anywhere, hence a second pass rather than one combined pattern.
+const ADVANCED_PATTERN = {
+  darwin: /^libndi_advanced(\.\d+)*\.dylib$/i,
+  linux: /^libndi_advanced\.so(\.\d+)*$/i,
+  win32: /^Processing\.NDI\.Lib\.Advanced\.x64\.dll$/i,
+};
+
 function findLibrary() {
   // An explicit override wins outright, and is not second-guessed.
   const explicit = process.env.TEXT_DISPLAY_NDI_LIB;
@@ -92,22 +115,30 @@ function findLibrary() {
     } catch { /* fall through to searching */ }
   }
 
-  const pattern = libraryPattern();
-  for (const dir of searchDirs()) {
-    const found = [];
-    scan(dir, pattern, 2, found);
-    if (!found.length) continue;
-    // Prefer the highest version when a machine has several side by side.
-    found.sort((a, b) => path.basename(b).localeCompare(path.basename(a), undefined, { numeric: true }));
-    return found[0];
+  const dirs = searchDirs();
+  const passes = [libraryPattern(), ADVANCED_PATTERN[process.platform]].filter(Boolean);
+
+  for (const pattern of passes) {
+    for (const dir of dirs) {
+      const found = [];
+      scan(dir, pattern, 2, found);
+      if (!found.length) continue;
+      // Prefer the highest version when a machine has several side by side.
+      found.sort((a, b) => path.basename(b).localeCompare(
+        path.basename(a), undefined, { numeric: true }));
+      return found[0];
+    }
   }
   return null;
 }
 
-// Everything that was looked at, for an error message that tells the operator
-// where to put the library rather than just that it is missing.
+// Where it looked, for an error message someone can act on. The macOS list
+// expands to every application on the machine, which is no use in a message.
 function searchedPaths() {
-  return searchDirs();
+  const dirs = searchDirs();
+  if (process.platform !== 'darwin') return dirs;
+  const fixed = dirs.filter((d) => !d.startsWith('/Applications'));
+  return [...fixed, 'and inside every app in /Applications'];
 }
 
 let cached = null;
