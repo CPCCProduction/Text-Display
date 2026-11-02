@@ -19,7 +19,7 @@ const pkg = require('./package.json');
 // A booth machine runs this beside a hosted app: no local server, just the
 // hosted display page rendered offscreen and put on the network as NDI.
 //
-//   "Text Display.exe" --server=http://10.101.6.12:4321   set it, and remember
+//   "Text Display.exe" --server=http://textdisplay.lan:4321  set it, and remember
 //   "Text Display.exe"                                    use what was remembered
 //   "Text Display.exe" --local                            forget it, host locally
 //

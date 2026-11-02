@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Updates the running app to the latest commit on the tracked branch.
 #
-#   ssh sandbox@10.101.6.12 '~/text-display/deploy.sh'
+#   ssh <user>@<server> '~/text-display/deploy.sh'
 #
 # Pulls, rebuilds, restarts, and then checks the app actually answers with the
 # commit it was told to deploy - a deploy that does not verify itself is just

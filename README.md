@@ -102,7 +102,7 @@ rendered offscreen, so all three agree by construction.
 
 ## Deployment
 
-Production runs in Docker on the sandbox server at **10.101.6.12:4321**.
+Production runs in Docker on an internal server, on port 4321.
 
 Deployment is push-to-deploy: the server hosts a bare repo whose
 `post-receive` hook checks out `main`, rebuilds the image and restarts the
@@ -127,8 +127,8 @@ a trailing `+` when there are uncommitted changes.
 To deploy by hand, or to see why one failed:
 
 ```sh
-ssh sandbox@10.101.6.12 '~/text-display/deploy.sh'
-ssh sandbox@10.101.6.12 'tail -40 ~/text-display-deploy.log'
+ssh <user>@<server> '~/text-display/deploy.sh'
+ssh <user>@<server> 'tail -40 ~/text-display-deploy.log'
 ```
 
 Data lives on the `text-display_text-display-data` Docker volume, so rebuilds
