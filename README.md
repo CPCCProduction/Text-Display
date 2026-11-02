@@ -133,3 +133,40 @@ ssh sandbox@10.101.6.12 'tail -40 ~/text-display-deploy.log'
 
 Data lives on the `text-display_text-display-data` Docker volume, so rebuilds
 and redeploys never touch the message history or display settings.
+
+## Running the sender on a Mac
+
+The sender works on macOS, but the installer has to be **built on a Mac** -
+electron-builder cannot cross-compile a macOS app from Windows.
+
+```sh
+git clone <this repo>
+cd Text-Display
+npm install
+npm run dist:mac        # produces dist/*.dmg and dist/*.zip
+```
+
+Then set it up exactly as on Windows: open it, choose **Send NDI for a hosted
+server**, enter the server address, Test, Save & restart.
+
+Things specific to macOS:
+
+- **Build for the Mac's own architecture.** `npm install` only fetches the
+  koffi binary for the machine it runs on, so building an Intel app on an
+  Apple-silicon Mac (or the reverse) ships without the FFI the NDI binding
+  needs and the feed will not start. Build on the architecture you intend to
+  run, or run `npm install` again on the other one.
+- **The NDI runtime is still required** and is not shipped with the app. NDI
+  Tools for Mac installs it; the app looks in `/usr/local/lib`,
+  `/opt/homebrew/lib` and the SDK folders, or set `TEXT_DISPLAY_NDI_LIB` to
+  the dylib.
+- **The app is unsigned**, so Gatekeeper will refuse it on first launch.
+  Right-click the app and choose Open, or clear the quarantine flag:
+  `xattr -dr com.apple.quarantine "/Applications/Text Display.app"`.
+  Signing properly needs an Apple Developer account.
+- **On a Retina Mac the app's own admin window renders at 1x** and will look
+  small. Display scaling is switched off deliberately so the feed comes out at
+  exactly the resolution asked for, and on macOS there is no way to exempt one
+  window. Use the admin panel in a browser instead, where scaling is native -
+  which is the usual way to drive it anyway.
+- Settings live in `~/Library/Application Support/TextDisplay`.

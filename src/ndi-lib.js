@@ -32,8 +32,14 @@ function candidatePaths() {
       out.push(path.join(base, 'NDI', v, 'Runtime', libraryName()));
     }
   } else if (process.platform === 'darwin') {
+    // NDI Tools for Mac drops the runtime in /usr/local/lib; the SDK and the
+    // Apple-silicon installers use their own folders. Homebrew's prefix on
+    // Apple silicon is /opt/homebrew.
     out.push('/usr/local/lib/libndi.dylib');
+    out.push('/usr/local/lib/libndi.4.dylib');
+    out.push('/opt/homebrew/lib/libndi.dylib');
     out.push('/Library/NDI SDK for Apple/lib/macOS/libndi.dylib');
+    out.push('/Library/Application Support/NewTek/NDI/libndi.dylib');
   } else {
     // Linux, including inside a container where the runtime is mounted in.
     for (const dir of ['/opt/ndi/lib', '/usr/local/lib', '/usr/lib', '/usr/lib/x86_64-linux-gnu']) {

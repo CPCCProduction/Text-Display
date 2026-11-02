@@ -12,6 +12,9 @@ function dataDir() {
   }
   const packaged = process.mainModule && /app\.asar/.test(process.mainModule.filename || '');
   if (packaged) {
+    if (process.platform === 'darwin') {
+      return path.join(os.homedir(), 'Library', 'Application Support', 'TextDisplay');
+    }
     const base = process.env.APPDATA || path.join(os.homedir(), '.config');
     return path.join(base, 'TextDisplay');
   }
